@@ -20,6 +20,7 @@ This will install the Firebase JWT library required for authentication.
 2. Run the SQL scripts to create all required tables:
    - Create the tables from your schema (roles, modules, admins, role_module_permissions)
    - Run `database/login_logs_and_locking.sql` to create the login_logs table and add locking columns to admins table
+   - Run `database/suppliers_and_stores.sql` to create suppliers, stores, and store_operating_hours tables
 
 ## Configuration
 
@@ -59,4 +60,19 @@ This will install the Firebase JWT library required for authentication.
 - `POST /role_module_permissions/create.php` - Create permission
 - `PUT /role_module_permissions/update.php` - Update permission
 - `DELETE /role_module_permissions/delete.php` - Delete permission
+
+### Suppliers
+- `POST /suppliers/create.php` - Create supplier
+- `PUT /suppliers/update.php` - Update supplier
+- `DELETE /suppliers/delete.php` - Delete supplier
+
+### Contact Persons
+- `POST /contact_persons/create.php` - Create contact person
+- `PUT /contact_persons/update.php` - Update contact person
+- `DELETE /contact_persons/delete.php` - Delete contact person
+
+### Stores
+- `POST /stores/create.php` - Create store
+- `PUT /stores/update.php` - Update store
+- `DELETE /stores/delete.php` - Delete store
 
