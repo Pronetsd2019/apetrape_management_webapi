@@ -23,6 +23,7 @@ This will install the Firebase JWT library required for authentication.
    - Run `database/suppliers_and_stores.sql` to create suppliers, contact_persons, stores, and store_operating_hours tables
    - Run `database/stock_and_inventory.sql` to create manufacturers, vehicle_models, items, store_items, and item_vehicle_models tables
    - Run `database/users_and_part_find_requests.sql` to create users and part_find_requests tables
+   - Run `database/quotations.sql` to create quotations and quotation_items tables
 
 ## Configuration
 
@@ -102,4 +103,10 @@ This will install the Firebase JWT library required for authentication.
 - `POST /part_find_requests/create.php` - Create part find request
 - `PUT /part_find_requests/update_status.php` - Update request status
 - `POST /part_find_requests/send_email.php` - Send email to user
+
+### Quotations
+- `POST /quotations/create.php` - Create quotation
+- `PUT /quotations/update.php` - Update quotation
+- `PUT /quotations/revoke.php` - Revoke quotation and send email
+- `POST /quotations/send_quote.php` - Send quotation via email or WhatsApp
 
