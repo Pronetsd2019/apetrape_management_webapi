@@ -20,7 +20,9 @@ This will install the Firebase JWT library required for authentication.
 2. Run the SQL scripts to create all required tables:
    - Create the tables from your schema (roles, modules, admins, role_module_permissions)
    - Run `database/login_logs_and_locking.sql` to create the login_logs table and add locking columns to admins table
-   - Run `database/suppliers_and_stores.sql` to create suppliers, stores, and store_operating_hours tables
+   - Run `database/suppliers_and_stores.sql` to create suppliers, contact_persons, stores, and store_operating_hours tables
+   - Run `database/stock_and_inventory.sql` to create manufacturers, vehicle_models, items, store_items, and item_vehicle_models tables
+   - Run `database/users_and_part_find_requests.sql` to create users and part_find_requests tables
 
 ## Configuration
 
@@ -75,4 +77,29 @@ This will install the Firebase JWT library required for authentication.
 - `POST /stores/create.php` - Create store
 - `PUT /stores/update.php` - Update store
 - `DELETE /stores/delete.php` - Delete store
+
+### Manufacturers
+- `POST /manufacturers/create.php` - Create manufacturer
+- `PUT /manufacturers/update.php` - Update manufacturer
+- `DELETE /manufacturers/delete.php` - Delete manufacturer
+
+### Vehicle Models
+- `POST /vehicle_models/create.php` - Create vehicle model
+- `PUT /vehicle_models/update.php` - Update vehicle model
+- `DELETE /vehicle_models/delete.php` - Delete vehicle model
+
+### Items/Stock
+- `POST /items/create.php` - Create item/stock
+- `PUT /items/update.php` - Update item/stock
+- `DELETE /items/delete.php` - Delete item/stock
+
+### Users
+- `GET /users/get_all.php` - Get all users
+- `POST /users/create.php` - Create user
+
+### Part Find Requests
+- `GET /part_find_requests/get_all.php` - Get all part find requests
+- `POST /part_find_requests/create.php` - Create part find request
+- `PUT /part_find_requests/update_status.php` - Update request status
+- `POST /part_find_requests/send_email.php` - Send email to user
 
