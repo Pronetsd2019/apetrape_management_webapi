@@ -19,7 +19,7 @@ This will install the Firebase JWT library required for authentication.
 1. Create your database
 2. Run the SQL scripts to create all required tables:
    - Create the tables from your schema (roles, modules, admins, role_module_permissions)
-   - Run `database/refresh_tokens_table.sql` to create the refresh_tokens table
+   - Run `database/login_logs_and_locking.sql` to create the login_logs table and add locking columns to admins table
 
 ## Configuration
 
@@ -37,11 +37,13 @@ This will install the Firebase JWT library required for authentication.
 ### Authentication
 - `POST /auth/login.php` - Login and get access token
 - `POST /auth/refresh.php` - Refresh access token
+- `POST /auth/signout.php` - Sign out and remove refresh token
 
 ### Admins
 - `POST /admin/create.php` - Create admin
 - `PUT /admin/update.php` - Update admin
 - `DELETE /admin/delete.php` - Delete admin
+- `POST /admin/unlock.php` - Unlock locked admin account
 
 ### Roles
 - `POST /roles/create.php` - Create role
