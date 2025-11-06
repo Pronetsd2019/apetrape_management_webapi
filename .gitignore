@@ -1,0 +1,70 @@
+# Composer
+/vendor/
+composer.lock
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Sensitive files and extensions
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.cert
+*.secret
+*.private
+config.ini
+secrets.php
+credentials.php
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+.project
+.settings/
+.buildpath
+
+# Logs
+*.log
+logs/
+error_log
+access_log
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+.cache/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# PHP
+*.php~
+*.php.bak
+*.php.swp
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
