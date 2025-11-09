@@ -6,7 +6,7 @@
 
 // Database configuration
 $db_host = 'localhost';
-$db_name = 'your_database_name'; // Update with your database name
+$db_name = 'apetrape'; // Update with your database name
 $db_user = 'root'; // Update with your database user
 $db_pass = ''; // Update with your database password
 

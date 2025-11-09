@@ -23,13 +23,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-$required_fields = ['name', 'surname', 'email', 'password', 'role_id'];
+$required_fields = ['name', 'surname', 'email', 'cell', 'password', 'password_confirmation', 'role_id'];
 foreach ($required_fields as $field) {
     if (!isset($input[$field]) || empty($input[$field])) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => "Field '$field' is required."]);
         exit;
     }
+}
+
+// Validate password confirmation
+if ($input['password'] !== $input['password_confirmation']) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Password confirmation does not match.']);
+    exit;
 }
 
 try {
@@ -61,13 +68,12 @@ try {
     ");
 
     $is_active = isset($input['is_active']) ? (int)$input['is_active'] : 1;
-    $cell = $input['cell'] ?? null;
 
     $stmt->execute([
         $input['name'],
         $input['surname'],
         $input['email'],
-        $cell,
+        $input['cell'],
         $password_hash,
         $input['role_id'],
         $is_active
