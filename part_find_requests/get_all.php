@@ -5,6 +5,11 @@
  */
 
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+
+// Ensure the request is authenticated
+requireJwtAuth();
+
 header('Content-Type: application/json');
 
 // Only allow GET method

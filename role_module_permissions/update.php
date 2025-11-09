@@ -5,10 +5,15 @@
  */
 
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+
+// Ensure the request is authenticated
+requireJwtAuth();
+
 header('Content-Type: application/json');
 
 // Only allow PUT method
-if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
+if ($_SERVER['REQUEST_METHOD'] !== 'PUT') { 
     http_response_code(405);
     echo json_encode(['success' => false, 'message' => 'Method not allowed. Use PUT.']);
     exit;

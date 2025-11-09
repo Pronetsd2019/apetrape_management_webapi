@@ -64,10 +64,38 @@ try {
     }
 
     // Generate new access token (JWT) - valid for 15 minutes
-    $access_token = generateJWT([
-        'admin_id' => $admin['id'],
+    $token_payload = [
+        'sub' => (int) $admin['id'],
+        'admin_id' => (int) $admin['id'],
         'email' => $admin['email']
-    ], 15);
+    ];
+
+    $access_token = generateJWT($token_payload, 15);
+
+    // Rotate refresh token (issue new token and update cookie)
+    $refresh_token_ttl = 7 * 24 * 60 * 60; // 7 days
+    $new_refresh_token = generateRefreshToken();
+    $refresh_token_expiry = time() + $refresh_token_ttl;
+
+    $stmt = $pdo->prepare("
+        UPDATE refresh_tokens
+        SET token = ?, expires_at = FROM_UNIXTIME(?)
+        WHERE id = ?
+    ");
+    $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
+
+    setcookie(
+        'refresh_token',
+        $new_refresh_token,
+        [
+            'expires' => $refresh_token_expiry,
+            'path' => '/',
+            'domain' => '',
+            'secure' => false, // Set to true in production with HTTPS
+            'httponly' => true,
+            'samesite' => 'Strict'
+        ]
+    );
 
     // Return new access token
     http_response_code(200);
@@ -77,7 +105,8 @@ try {
         'data' => [
             'access_token' => $access_token,
             'token_type' => 'Bearer',
-            'expires_in' => 900 // 15 minutes in seconds
+            'expires_in' => 900, // 15 minutes in seconds
+            'refresh_expires_in' => $refresh_token_ttl
         ]
     ]);
 

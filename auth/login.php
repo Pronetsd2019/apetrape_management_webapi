@@ -177,10 +177,13 @@ try {
     $stmt->execute([$admin['id'], $ip_address, $user_agent]);
 
     // Generate access token (JWT) - valid for 15 minutes
-    $access_token = generateJWT([
-        'admin_id' => $admin['id'],
+    $token_payload = [
+        'sub' => (int) $admin['id'],
+        'admin_id' => (int) $admin['id'],
         'email' => $admin['email']
-    ], 15);
+    ];
+
+    $access_token = generateJWT($token_payload, 15);
 
     // Set refresh token as HTTP-only cookie
     setcookie(
