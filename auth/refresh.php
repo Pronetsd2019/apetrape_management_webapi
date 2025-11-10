@@ -37,7 +37,7 @@ try {
 
     if (!$token_data) {
         http_response_code(401);
-        echo json_encode(['success' => false, 'message' => 'Invalid or expired refresh token.']);
+        echo json_encode(['success' => false, 'token' => $refresh_token, 'message' => 'Invalid or expired refresh token.']);
         exit;
     }
 

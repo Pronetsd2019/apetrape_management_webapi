@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-$required_fields = ['supplier_id', 'physical_address'];
+$required_fields = ['supplier_id', 'physical_address', 'city_id'];
 foreach ($required_fields as $field) {
     if (!isset($input[$field]) || empty($input[$field])) {
         http_response_code(400);
@@ -33,18 +33,79 @@ foreach ($required_fields as $field) {
 }
 
 try {
+    $pdo->beginTransaction();
+
     // Validate supplier_id exists
     $stmt = $pdo->prepare("SELECT id FROM suppliers WHERE id = ?");
     $stmt->execute([$input['supplier_id']]);
     if (!$stmt->fetch()) {
         http_response_code(404);
         echo json_encode(['success' => false, 'message' => 'Supplier not found.']);
+        $pdo->rollBack();
         exit;
     }
 
+    // Validate city_id exists
+    $stmt = $pdo->prepare("SELECT id FROM city WHERE id = ?");
+    $stmt->execute([$input['city_id']]);
+
+    if (!$stmt->fetch()) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => 'City not found.']);
+        $pdo->rollBack();
+        exit;
+    }
+
+    $create_new_contact = isset($input['create_new_contact']) ? filter_var($input['create_new_contact'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : false;
+
     // Validate contact_person_id if provided
     $contact_person_id = null;
-    if (isset($input['contact_person_id']) && !empty($input['contact_person_id'])) {
+    if ($create_new_contact) {
+        $new_contact = $input['new_contact_person'] ?? null;
+        if (!$new_contact || !is_array($new_contact)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'New contact person details are required.']);
+            $pdo->rollBack();
+            exit;
+        }
+
+        $contact_required_fields = ['name', 'surname'];
+        foreach ($contact_required_fields as $field) {
+            if (!isset($new_contact[$field]) || empty($new_contact[$field])) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'message' => "Contact person field '$field' is required."]);
+                $pdo->rollBack();
+                exit;
+            }
+        }
+
+        // Check email uniqueness if provided
+        if (!empty($new_contact['email'])) {
+            $stmt = $pdo->prepare("SELECT id FROM contact_persons WHERE email = ? AND supplier_id = ?");
+            $stmt->execute([$new_contact['email'], $input['supplier_id']]);
+            if ($stmt->fetch()) {
+                http_response_code(409);
+                echo json_encode(['success' => false, 'message' => 'Contact person email already exists for this supplier.']);
+                $pdo->rollBack();
+                exit;
+            }
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO contact_persons (supplier_id, name, surname, email, cell)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $input['supplier_id'],
+            $new_contact['name'],
+            $new_contact['surname'],
+            $new_contact['email'] ?? null,
+            $new_contact['cell'] ?? null
+        ]);
+
+        $contact_person_id = $pdo->lastInsertId();
+
+    } elseif (isset($input['contact_person_id']) && !empty($input['contact_person_id'])) {
         $stmt = $pdo->prepare("SELECT id, supplier_id FROM contact_persons WHERE id = ?");
         $stmt->execute([$input['contact_person_id']]);
         $contact_person = $stmt->fetch();
@@ -52,6 +113,7 @@ try {
         if (!$contact_person) {
             http_response_code(404);
             echo json_encode(['success' => false, 'message' => 'Contact person not found.']);
+            $pdo->rollBack();
             exit;
         }
         
@@ -59,6 +121,7 @@ try {
         if ($contact_person['supplier_id'] != $input['supplier_id']) {
             http_response_code(400);
             echo json_encode(['success' => false, 'message' => 'Contact person does not belong to this supplier.']);
+            $pdo->rollBack();
             exit;
         }
         
@@ -67,8 +130,8 @@ try {
 
     // Insert store
     $stmt = $pdo->prepare("
-        INSERT INTO stores (supplier_id, physical_address, coordinates, contact_person_id)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO stores (supplier_id, physical_address, coordinates, contact_person_id, city_id)
+        VALUES (?, ?, ?, ?, ?)
     ");
 
     $coordinates = $input['coordinates'] ?? null;
@@ -77,7 +140,8 @@ try {
         $input['supplier_id'],
         $input['physical_address'],
         $coordinates,
-        $contact_person_id
+        $contact_person_id,
+        $input['city_id']
     ]);
 
     $store_id = $pdo->lastInsertId();
@@ -110,7 +174,7 @@ try {
     // Fetch created store with contact person details
     $stmt = $pdo->prepare("
         SELECT s.id, s.supplier_id, s.physical_address, s.coordinates, s.contact_person_id,
-               s.created_at, s.updated_at,
+               s.city_id, s.created_at, s.updated_at,
                cp.name as contact_person_name, cp.surname as contact_person_surname,
                cp.email as contact_person_email, cp.cell as contact_person_cell
         FROM stores s
@@ -130,6 +194,8 @@ try {
     $stmt->execute([$store_id]);
     $store['operating_hours'] = $stmt->fetchAll();
 
+    $pdo->commit();
+
     http_response_code(201);
     echo json_encode([
         'success' => true,
@@ -138,6 +204,9 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     http_response_code(500);
     echo json_encode([
         'success' => false,

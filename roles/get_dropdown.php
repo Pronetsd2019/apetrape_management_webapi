@@ -23,7 +23,7 @@ try {
     $stmt = $pdo->query("
         SELECT id, role_name as name, description
         FROM roles
-        ORDER BY name ASC
+        ORDER BY role_name ASC
     ");
     $roles = $stmt->fetchAll();
 

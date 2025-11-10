@@ -23,39 +23,73 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-if (!isset($input['name']) || empty($input['name'])) {
+if (!isset($input['supplier_name']) || empty($input['supplier_name'])) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Field "name" is required.']);
+    echo json_encode(['success' => false, 'message' => 'Field "supplier_name" is required.']);
+    exit;
+}
+
+if (!isset($input['email']) || empty($input['email'])) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "email" is required.']);
+    exit;
+}
+
+if (!isset($input['cell']) || empty($input['cell'])) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "cell" is required.']);
+    exit;
+}
+
+if (!isset($input['password']) || empty($input['password'])) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "password" is required.']);
+    exit;
+}
+
+if (!isset($input['password_confirmation']) || empty($input['password_confirmation'])) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "password_confirmation" is required.']);
+    exit;
+}
+
+if ($input['password'] !== $input['password_confirmation']) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Password confirmation does not match.']);
     exit;
 }
 
 try {
     // Check if email already exists (if provided)
-    if (isset($input['email']) && !empty($input['email'])) {
-        $stmt = $pdo->prepare("SELECT id FROM suppliers WHERE email = ?");
-        $stmt->execute([$input['email']]);
-        if ($stmt->fetch()) {
-            http_response_code(409);
-            echo json_encode(['success' => false, 'message' => 'Email already exists.']);
-            exit;
-        }
+    $stmt = $pdo->prepare("SELECT id FROM suppliers WHERE email = ?");
+    $stmt->execute([$input['email']]);
+    if ($stmt->fetch()) {
+        http_response_code(409);
+        echo json_encode(['success' => false, 'message' => 'Email already exists.']);
+        exit;
     }
+
+    // Hash password
+    $password_hash = password_hash($input['password'], PASSWORD_DEFAULT);
 
     // Insert supplier
     $stmt = $pdo->prepare("
-        INSERT INTO suppliers (name, email, cellphone, telephone)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO suppliers (name, email, cellphone, telephone, password_hash)
+        VALUES (?, ?, ?, ?, ?)
     ");
 
-    $email = $input['email'] ?? null;
-    $cellphone = $input['cellphone'] ?? null;
+    $email = $input['email'];
+    $name = $input['supplier_name'];
+    $cellphone = $input['cell'];
     $telephone = $input['telephone'] ?? null;
 
+
     $stmt->execute([
-        $input['name'],
+        $name,
         $email,
         $cellphone,
-        $telephone
+        $telephone,
+        $password_hash
     ]);
 
     $supplier_id = $pdo->lastInsertId();

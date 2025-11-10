@@ -13,7 +13,7 @@ requireJwtAuth();
 header('Content-Type: application/json');
 
 // Only allow PUT method
-if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['success' => false, 'message' => 'Method not allowed. Use PUT.']);
     exit;
@@ -68,10 +68,6 @@ try {
     if (isset($input['cell'])) {
         $update_fields[] = "cell = ?";
         $params[] = $input['cell'];
-    }
-    if (isset($input['password'])) {
-        $update_fields[] = "password_hash = ?";
-        $params[] = password_hash($input['password'], PASSWORD_DEFAULT);
     }
     if (isset($input['role_id'])) {
         // Validate role_id exists

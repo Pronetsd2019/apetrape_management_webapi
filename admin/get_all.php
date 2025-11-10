@@ -34,7 +34,8 @@ try {
             a.role_id,
             r.role_name,
             a.is_active,
-            a.created_at
+            a.created_at,
+            a.locked_until
         FROM admins a
         LEFT JOIN roles r ON a.role_id = r.id
     ";
