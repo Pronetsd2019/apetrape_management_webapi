@@ -83,6 +83,14 @@ try {
         $params[] = $input['email'];
     }
     if (isset($input['cell'])) {
+        // Check if cell already exists for another contact person in the same supplier
+        $stmt = $pdo->prepare("SELECT id FROM contact_persons WHERE cell = ? AND supplier_id = ? AND id != ?");
+        $stmt->execute([$input['cell'], $supplier_id, $contact_person_id]);
+        if ($stmt->fetch()) {
+            http_response_code(409);
+            echo json_encode(['success' => false, 'message' => 'Cell number already exists for another contact person in this supplier.']);
+            exit;
+        }
         $update_fields[] = "cell = ?";
         $params[] = $input['cell'];
     }

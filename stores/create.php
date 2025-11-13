@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-$required_fields = ['supplier_id', 'physical_address', 'city_id'];
+$required_fields = ['supplier_id', 'name', 'physical_address', 'city_id'];
 foreach ($required_fields as $field) {
     if (!isset($input[$field]) || empty($input[$field])) {
         http_response_code(400);
@@ -130,14 +130,15 @@ try {
 
     // Insert store
     $stmt = $pdo->prepare("
-        INSERT INTO stores (supplier_id, physical_address, coordinates, contact_person_id, city_id)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO stores (supplier_id, name, physical_address, coordinates, contact_person_id, city_id)
+        VALUES (?, ?, ?, ?, ?, ?)
     ");
 
     $coordinates = $input['coordinates'] ?? null;
 
     $stmt->execute([
         $input['supplier_id'],
+        $input['name'],
         $input['physical_address'],
         $coordinates,
         $contact_person_id,
@@ -173,7 +174,7 @@ try {
 
     // Fetch created store with contact person details
     $stmt = $pdo->prepare("
-        SELECT s.id, s.supplier_id, s.physical_address, s.coordinates, s.contact_person_id,
+        SELECT s.id, s.supplier_id, s.name, s.physical_address, s.coordinates, s.contact_person_id,
                s.city_id, s.created_at, s.updated_at,
                cp.name as contact_person_name, cp.surname as contact_person_surname,
                cp.email as contact_person_email, cp.cell as contact_person_cell

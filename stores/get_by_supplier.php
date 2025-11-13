@@ -41,6 +41,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT 
             s.id AS store_id,
+            s.name AS store_name,
             s.physical_address,
             cp.id AS contact_person_id,
             cp.name AS contact_person_name,
@@ -52,7 +53,8 @@ try {
             r.name AS region_name,
             co.id AS country_id,
             co.name AS country_name,
-            COALESCE(SUM(si.quantity), 0) AS total_stock_quantity
+            s.status,
+            COUNT(si.id) AS total_items_quantity
         FROM stores s
         LEFT JOIN contact_persons cp ON s.contact_person_id = cp.id
         LEFT JOIN city c ON s.city_id = c.id
@@ -61,7 +63,7 @@ try {
         LEFT JOIN store_items si ON si.store_id = s.id
         WHERE s.supplier_id = ?
         GROUP BY 
-        s.id, s.physical_address,
+        s.id, s.name, s.physical_address,
         cp.id, cp.name, cp.email, cp.cell,
         c.id, c.name,
         r.id, r.name,

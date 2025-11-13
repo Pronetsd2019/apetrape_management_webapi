@@ -53,6 +53,17 @@ try {
         }
     }
 
+    // Check if cell already exists for this supplier (if provided)
+    if (isset($input['cell']) && !empty($input['cell'])) {
+        $stmt = $pdo->prepare("SELECT id FROM contact_persons WHERE cell = ? AND supplier_id = ?");
+        $stmt->execute([$input['cell'], $input['supplier_id']]);
+        if ($stmt->fetch()) {
+            http_response_code(409);
+            echo json_encode(['success' => false, 'message' => 'Cell number already exists for this supplier.']);
+            exit;
+        }
+    }
+
     // Insert contact person
     $stmt = $pdo->prepare("
         INSERT INTO contact_persons (supplier_id, name, surname, email, cell)

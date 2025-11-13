@@ -31,10 +31,10 @@ try {
             s.locked_until,
             s.created_at AS entry_date,
             COUNT(DISTINCT st.id) AS number_of_stores,
-            COALESCE(SUM(si.quantity), 0) AS total_items
+            COUNT(DISTINCT i.id) AS total_items
         FROM suppliers s
         LEFT JOIN stores st ON st.supplier_id = s.id
-        LEFT JOIN store_items si ON si.store_id = st.id
+        LEFT JOIN items i ON i.supplier_id = s.id
         GROUP BY s.id, s.name, s.cellphone, s.email, s.status, s.locked_until, s.created_at
         ORDER BY s.created_at DESC
     ");

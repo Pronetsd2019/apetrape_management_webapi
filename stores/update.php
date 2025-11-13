@@ -73,6 +73,16 @@ try {
         $update_fields[] = "physical_address = ?";
         $params[] = $input['physical_address'];
     }
+    if (isset($input['name'])) {
+        if ($input['name'] === null || $input['name'] === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Store name cannot be empty.']);
+            $pdo->rollBack();
+            exit;
+        }
+        $update_fields[] = "name = ?";
+        $params[] = $input['name'];
+    }
     if (isset($input['coordinates'])) {
         $update_fields[] = "coordinates = ?";
         $params[] = $input['coordinates'];
@@ -462,7 +472,7 @@ try {
 
     // Fetch updated store with contact person details
     $stmt = $pdo->prepare("
-        SELECT s.id, s.supplier_id, s.physical_address, s.coordinates, s.contact_person_id,
+        SELECT s.id, s.supplier_id, s.name, s.physical_address, s.coordinates, s.contact_person_id,
                s.city_id, s.created_at, s.updated_at,
                cp.name as contact_person_name, cp.surname as contact_person_surname,
                cp.email as contact_person_email, cp.cell as contact_person_cell

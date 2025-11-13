@@ -1,7 +1,7 @@
 <?php
 /**
- * Get Contact Persons by Supplier Endpoint
- * GET /contact_persons/get_by_supplier.php
+ * Get All Contact Persons Endpoint
+ * GET /contact_persons/get_all.php
  */
 
 require_once __DIR__ . '/../util/connect.php';
@@ -19,26 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-$supplier_id = $_GET['supplier_id'] ?? null;
-
-if (!$supplier_id) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Supplier ID is required.']);
-    exit;
-}
-
 try {
-    // Validate supplier exists
-    $stmt = $pdo->prepare("SELECT id FROM suppliers WHERE id = ?");
-    $stmt->execute([$supplier_id]);
-    if (!$stmt->fetch()) {
-        http_response_code(404);
-        echo json_encode(['success' => false, 'message' => 'Supplier not found.']);
-        exit;
-    }
-
-    // Fetch contact persons for the supplier
-    $stmt = $pdo->prepare("
+    $stmt = $pdo->query("
         SELECT 
             cp.id,
             cp.supplier_id,
@@ -51,7 +33,6 @@ try {
             COUNT(s.id) AS store_count
         FROM contact_persons cp
         LEFT JOIN stores s ON cp.supplier_id = s.supplier_id
-        WHERE cp.supplier_id = ?
         GROUP BY 
             cp.id,
             cp.supplier_id,
@@ -63,14 +44,15 @@ try {
             cp.updated_at
         ORDER BY cp.name ASC, cp.surname ASC
     ");
-    $stmt->execute([$supplier_id]);
-    $contact_persons = $stmt->fetchAll();
+
+    $contact_persons = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Contact persons fetched successfully.',
-        'data' => $contact_persons
+        'data' => $contact_persons,
+        'count' => count($contact_persons)
     ]);
 
 } catch (PDOException $e) {

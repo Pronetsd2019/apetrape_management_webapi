@@ -73,10 +73,7 @@ try {
         $update_fields[] = "year_to = ?";
         $params[] = (int)$input['year_to'];
     }
-    if (isset($input['description'])) {
-        $update_fields[] = "description = ?";
-        $params[] = $input['description'];
-    }
+
 
     if (empty($update_fields)) {
         http_response_code(400);
@@ -94,7 +91,7 @@ try {
     // Fetch updated vehicle model
     $stmt = $pdo->prepare("
         SELECT vm.id, vm.manufacturer_id, vm.model_name, vm.variant, 
-               vm.year_from, vm.year_to, vm.description, vm.created_at, vm.updated_at,
+               vm.year_from, vm.year_to, vm.created_at, vm.updated_at,
                m.name as manufacturer_name
         FROM vehicle_models vm
         INNER JOIN manufacturers m ON vm.manufacturer_id = m.id

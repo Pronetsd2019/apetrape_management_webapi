@@ -45,21 +45,17 @@ try {
     $update_fields = [];
     $params = [];
 
-    if (isset($input['name'])) {
+    if (isset($input['manufacturer_name'])) {
         // Check if name already exists for another manufacturer
         $stmt = $pdo->prepare("SELECT id FROM manufacturers WHERE name = ? AND id != ?");
-        $stmt->execute([$input['name'], $manufacturer_id]);
+        $stmt->execute([$input['manufacturer_name'], $manufacturer_id]);
         if ($stmt->fetch()) {
             http_response_code(409);
             echo json_encode(['success' => false, 'message' => 'Manufacturer name already exists.']);
             exit;
         }
         $update_fields[] = "name = ?";
-        $params[] = $input['name'];
-    }
-    if (isset($input['description'])) {
-        $update_fields[] = "description = ?";
-        $params[] = $input['description'];
+        $params[] = $input['manufacturer_name'];
     }
 
     if (empty($update_fields)) {
@@ -76,7 +72,7 @@ try {
     $stmt->execute($params);
 
     // Fetch updated manufacturer
-    $stmt = $pdo->prepare("SELECT id, name, description, created_at, updated_at FROM manufacturers WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, created_at, updated_at FROM manufacturers WHERE id = ?");
     $stmt->execute([$manufacturer_id]);
     $manufacturer = $stmt->fetch();
 

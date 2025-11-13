@@ -24,6 +24,8 @@ try {
         SELECT 
             s.id AS store_id,
             s.supplier_id,
+            sup.name AS supplier_name,
+            s.name AS store_name,
             s.physical_address,
             s.coordinates,
             s.contact_person_id,
@@ -35,19 +37,22 @@ try {
             c.name AS city_name,
             r.id AS region_id,
             r.name AS region_name,
+            s.status,
             co.id AS country_id,
             co.name AS country_name,
-            COALESCE(SUM(si.quantity), 0) AS total_stock_quantity,
+            COUNT(DISTINCT si.item_id) AS total_items_quantity,
             s.created_at,
             s.updated_at
         FROM stores s
         LEFT JOIN contact_persons cp ON s.contact_person_id = cp.id
+        LEFT JOIN suppliers sup ON s.supplier_id = sup.id
         LEFT JOIN city c ON s.city_id = c.id
         LEFT JOIN region r ON c.region_id = r.id
         LEFT JOIN country co ON r.country_id = co.id
         LEFT JOIN store_items si ON si.store_id = s.id
         GROUP BY 
-        s.id, s.physical_address,
+        s.id, s.name, s.physical_address,
+        sup.id, sup.name,
         cp.id, cp.name, cp.email, cp.cell,
         c.id, c.name,
         r.id, r.name,

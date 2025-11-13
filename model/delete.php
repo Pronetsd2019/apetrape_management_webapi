@@ -46,7 +46,22 @@ try {
         exit;
     }
 
-    // Delete vehicle model (CASCADE will handle item_vehicle_models)
+    // Check if any items are attached to this vehicle model
+    $stmt = $pdo->prepare("SELECT id, item_id FROM item_vehicle_models WHERE vehicle_model_id = ?");
+    $stmt->execute([$vehicle_model_id]);
+    $attachedItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($attachedItems)) {
+        http_response_code(409);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Cannot delete vehicle model. It is linked to one or more items.',
+            'data' => $attachedItems
+        ]);
+        exit;
+    }
+
+    // Delete vehicle model
     $stmt = $pdo->prepare("DELETE FROM vehicle_models WHERE id = ?");
     $stmt->execute([$vehicle_model_id]);
 

@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-if (!isset($input['name']) || empty($input['name'])) {
+if (!isset($input['manufacturer_name']) || empty($input['manufacturer_name'])) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Field "name" is required.']);
     exit;
@@ -32,7 +32,7 @@ if (!isset($input['name']) || empty($input['name'])) {
 try {
     // Check if manufacturer name already exists
     $stmt = $pdo->prepare("SELECT id FROM manufacturers WHERE name = ?");
-    $stmt->execute([$input['name']]);
+    $stmt->execute([$input['manufacturer_name']]);
     if ($stmt->fetch()) {
         http_response_code(409);
         echo json_encode(['success' => false, 'message' => 'Manufacturer name already exists.']);
@@ -41,21 +41,18 @@ try {
 
     // Insert manufacturer
     $stmt = $pdo->prepare("
-        INSERT INTO manufacturers (name, description)
-        VALUES (?, ?)
+        INSERT INTO manufacturers (name)
+        VALUES (?)
     ");
 
-    $description = $input['description'] ?? null;
-
     $stmt->execute([
-        $input['name'],
-        $description
+        $input['manufacturer_name']
     ]);
 
     $manufacturer_id = $pdo->lastInsertId();
 
     // Fetch created manufacturer
-    $stmt = $pdo->prepare("SELECT id, name, description, created_at, updated_at FROM manufacturers WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, created_at, updated_at FROM manufacturers WHERE id = ?");
     $stmt->execute([$manufacturer_id]);
     $manufacturer = $stmt->fetch();
 

@@ -46,7 +46,11 @@ try {
         exit;
     }
 
-    // Delete item (CASCADE will handle store_items and item_vehicle_models)
+    // Remove store associations
+    $stmt = $pdo->prepare("DELETE FROM store_items WHERE item_id = ?");
+    $stmt->execute([$item_id]);
+
+    // Delete item (CASCADE will handle remaining relations)
     $stmt = $pdo->prepare("DELETE FROM items WHERE id = ?");
     $stmt->execute([$item_id]);
 

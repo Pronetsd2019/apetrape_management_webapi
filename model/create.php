@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-$required_fields = ['manufacturer_id', 'model_name'];
+$required_fields = ['manufacturer_id', 'model_name', 'variant', 'year_from', 'year_to'];
 foreach ($required_fields as $field) {
     if (!isset($input[$field]) || empty($input[$field])) {
         http_response_code(400);
@@ -42,24 +42,41 @@ try {
         exit;
     }
 
+    if (!is_numeric($input['year_from']) || !is_numeric($input['year_to'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Fields \'year_from\' and \'year_to\' must be numeric.']);
+        exit;
+    }
+
+    $year_from = (int)$input['year_from'];
+    $year_to = (int)$input['year_to'];
+
+    if ($year_from <= 0 || $year_to <= 0) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Fields \'year_from\' and \'year_to\' must be positive integers.']);
+        exit;
+    }
+
+    if ($year_to < $year_from) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => '\'year_to\' cannot be less than \'year_from\'.']);
+        exit;
+    }
+
     // Insert vehicle model
     $stmt = $pdo->prepare("
-        INSERT INTO vehicle_models (manufacturer_id, model_name, variant, year_from, year_to, description)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO vehicle_models (manufacturer_id, model_name, variant, year_from, year_to)
+        VALUES (?, ?, ?, ?, ?)
     ");
 
-    $variant = $input['variant'] ?? null;
-    $year_from = isset($input['year_from']) ? (int)$input['year_from'] : null;
-    $year_to = isset($input['year_to']) ? (int)$input['year_to'] : null;
-    $description = $input['description'] ?? null;
+    $variant = $input['variant'];
 
     $stmt->execute([
         $input['manufacturer_id'],
         $input['model_name'],
         $variant,
         $year_from,
-        $year_to,
-        $description
+        $year_to
     ]);
 
     $vehicle_model_id = $pdo->lastInsertId();
@@ -67,7 +84,7 @@ try {
     // Fetch created vehicle model
     $stmt = $pdo->prepare("
         SELECT vm.id, vm.manufacturer_id, vm.model_name, vm.variant, 
-               vm.year_from, vm.year_to, vm.description, vm.created_at, vm.updated_at,
+               vm.year_from, vm.year_to, vm.created_at, vm.updated_at,
                m.name as manufacturer_name
         FROM vehicle_models vm
         INNER JOIN manufacturers m ON vm.manufacturer_id = m.id
