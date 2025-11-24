@@ -59,22 +59,9 @@ try {
         exit;
     }
 
-    // Build update query
-    $update_fields = ["status = ?"];
-    $params = [$status];
-
-    // Optional: Update admin response
-    if (isset($input['admin_response'])) {
-        $update_fields[] = "admin_response = ?";
-        $params[] = $input['admin_response'];
-    }
-
-    $params[] = $request_id;
-
     // Update status
-    $sql = "UPDATE part_find_requests SET " . implode(', ', $update_fields) . " WHERE id = ?";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+    $stmt = $pdo->prepare("UPDATE part_find_requests SET status = ? WHERE id = ?");
+    $stmt->execute([$status, $request_id]);
 
     // Fetch updated request with user details
     $stmt = $pdo->prepare("
@@ -83,7 +70,6 @@ try {
             pfr.user_id,
             pfr.message,
             pfr.status,
-            pfr.admin_response,
             pfr.created_at,
             pfr.updated_at,
             u.name as user_name,

@@ -120,16 +120,6 @@ try {
     $mail_sent = mail($to, $subject, $email_body, implode("\r\n", $headers));
 
     if ($mail_sent) {
-        // Optionally update admin_response in database
-        if (isset($input['update_admin_response']) && $input['update_admin_response']) {
-            $stmt = $pdo->prepare("
-                UPDATE part_find_requests 
-                SET admin_response = ? 
-                WHERE id = ?
-            ");
-            $stmt->execute([$email_message, $request_id]);
-        }
-
         http_response_code(200);
         echo json_encode([
             'success' => true,

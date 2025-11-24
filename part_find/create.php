@@ -65,7 +65,6 @@ try {
             pfr.user_id,
             pfr.message,
             pfr.status,
-            pfr.admin_response,
             pfr.created_at,
             pfr.updated_at,
             u.name as user_name,

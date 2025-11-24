@@ -31,7 +31,6 @@ try {
             pfr.user_id,
             pfr.message,
             pfr.status,
-            pfr.admin_response,
             pfr.created_at,
             pfr.updated_at,
             u.name as user_name,
@@ -63,7 +62,37 @@ try {
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $requests = $stmt->fetchAll();
+    $requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($requests)) {
+        // Get all request IDs
+        $requestIds = array_column($requests, 'id');
+        $placeholders = implode(',', array_fill(0, count($requestIds), '?'));
+
+        // Fetch images for all requests
+        $stmtImages = $pdo->prepare("
+            SELECT id, request_id, img_src
+            FROM find_part_img
+            WHERE request_id IN ($placeholders)
+            ORDER BY request_id ASC, id ASC
+        ");
+        $stmtImages->execute($requestIds);
+        $images = $stmtImages->fetchAll(PDO::FETCH_ASSOC);
+
+        // Group images by request_id
+        $imagesByRequest = [];
+        foreach ($images as $image) {
+            $requestId = $image['request_id'];
+            unset($image['request_id']);
+            $imagesByRequest[$requestId][] = $image;
+        }
+
+        // Attach images to each request
+        foreach ($requests as &$request) {
+            $request['images'] = $imagesByRequest[$request['id']] ?? [];
+        }
+        unset($request);
+    }
 
     http_response_code(200);
     echo json_encode([
