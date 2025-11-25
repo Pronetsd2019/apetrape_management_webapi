@@ -29,41 +29,67 @@ if (!isset($input['user_id']) || empty($input['user_id'])) {
     exit;
 }
 
+if (!isset($input['customer_name']) || empty(trim($input['customer_name']))) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "customer_name" is required.']);
+    exit;
+}
+
+if (!isset($input['customer_cell']) || empty(trim($input['customer_cell']))) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "customer_cell" is required.']);
+    exit;
+}
+
+if (!isset($input['customer_address']) || empty(trim($input['customer_address']))) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Field "customer_address" is required.']);
+    exit;
+}
+
 if (!isset($input['items']) || !is_array($input['items']) || empty($input['items'])) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Field "items" is required and must be a non-empty array.']);
     exit;
 }
 
+$pdo->beginTransaction();
+
 try {
     // Validate user_id exists
     $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ?");
     $stmt->execute([$input['user_id']]);
     if (!$stmt->fetch()) {
+        $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['success' => false, 'message' => 'User not found.']);
         exit;
     }
 
-    // Start transaction
-    $pdo->beginTransaction();
-
-    // Insert quotation
+    // Insert quotation without quote_no first
     $stmt = $pdo->prepare("
-        INSERT INTO quotations (description, user_id, status)
-        VALUES (?, ?, ?)
+        INSERT INTO quotations (user_id, status, customer_name, customer_cell, customer_address)
+        VALUES (?, ?, ?, ?, ?)
     ");
 
-    $description = $input['description'] ?? null;
-    $status = $input['status'] ?? 'draft';
+    $status = $input['status'] ?? 'pending';
 
     $stmt->execute([
-        $description,
         $input['user_id'],
-        $status
+        $status,
+        trim($input['customer_name']),
+        trim($input['customer_cell']),
+        trim($input['customer_address'])
     ]);
 
     $quote_id = $pdo->lastInsertId();
+
+    // Generate quote_no as YYYYMMDD + quote_id (e.g., 2025112545)
+    $quote_no = date('Ymd') . $quote_id;
+
+    // Update quotation with quote_no
+    $stmt = $pdo->prepare("UPDATE quotations SET quote_no = ? WHERE id = ?");
+    $stmt->execute([$quote_no, $quote_id]);
 
     // Insert quotation items
     $stmt_item = $pdo->prepare("
@@ -72,23 +98,24 @@ try {
     ");
 
     foreach ($input['items'] as $item) {
-        if (!isset($item['quantity']) || !isset($item['price'])) {
-            throw new Exception('Each item must have quantity and price.');
+        // Validate required item fields
+        if (!isset($item['quantity']) || !isset($item['unit_price'])) {
+            throw new Exception('Each item must have "quantity" and "unit_price".');
         }
 
         $sku = $item['sku'] ?? null;
         $item_description = $item['description'] ?? null;
         $quantity = (int)$item['quantity'];
-        $price = (float)$item['price'];
-        $total = $quantity * $price;
+        $unit_price = (float)$item['unit_price'];
+        $line_total = $item['line_total'] ?? ($quantity * $unit_price);
 
         $stmt_item->execute([
             $quote_id,
             $sku,
             $item_description,
             $quantity,
-            $price,
-            $total
+            $unit_price,
+            $line_total
         ]);
     }
 
@@ -97,20 +124,40 @@ try {
 
     // Fetch created quotation with items
     $stmt = $pdo->prepare("
-        SELECT id, description, user_id, status, entry, created_at, updated_at
-        FROM quotations WHERE id = ?
+        SELECT 
+            id, 
+            user_id, 
+            status, 
+            quote_no, 
+            customer_name,
+            customer_cell,
+            customer_address,
+            sent_date,
+            created_at, 
+            updated_at
+        FROM quotations 
+        WHERE id = ?
     ");
     $stmt->execute([$quote_id]);
-    $quotation = $stmt->fetch();
+    $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Fetch quotation items
     $stmt = $pdo->prepare("
-        SELECT id, quote_id, sku, description, quantity, price, total
+        SELECT 
+            id, 
+            quote_id, 
+            sku, 
+            description, 
+            quantity, 
+            price, 
+            total,
+            created_at,
+            updated_at
         FROM quotation_items
         WHERE quote_id = ?
     ");
     $stmt->execute([$quote_id]);
-    $quotation['items'] = $stmt->fetchAll();
+    $quotation['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Calculate grand total
     $grand_total = array_sum(array_column($quotation['items'], 'total'));

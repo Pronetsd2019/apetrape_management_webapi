@@ -21,11 +21,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'DELETE') {
 
 // Get role ID from query string or JSON body
 $role_id = null;
-if (isset($_GET['id'])) {
-    $role_id = $_GET['id'];
+if (isset($_GET['role_id'])) {
+    $role_id = $_GET['role_id'];
 } else {
     $input = json_decode(file_get_contents('php://input'), true);
-    $role_id = $input['id'] ?? null;
+    $role_id = $input['role_id'] ?? null;
 }
 
 if (!$role_id) {
@@ -59,16 +59,35 @@ try {
         exit;
     }
 
-    // Delete role (CASCADE will handle role_module_permissions)
-    $stmt = $pdo->prepare("DELETE FROM roles WHERE id = ?");
-    $stmt->execute([$role_id]);
+    // Begin transaction for atomic deletion
+    $pdo->beginTransaction();
 
-    http_response_code(200);
-    echo json_encode([
-        'success' => true,
-        'message' => 'Role deleted successfully.',
-        'data' => $role
-    ]);
+    try {
+        // Delete role permissions first
+        $stmt = $pdo->prepare("DELETE FROM role_module_permissions WHERE role_id = ?");
+        $stmt->execute([$role_id]);
+
+        // Delete role
+        $stmt = $pdo->prepare("DELETE FROM roles WHERE id = ?");
+        $stmt->execute([$role_id]);
+
+        // Commit transaction
+        $pdo->commit();
+
+        http_response_code(200);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Role deleted successfully.',
+            'data' => $role
+        ]);
+
+    } catch (PDOException $e) {
+        // Rollback transaction on error
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e; // Re-throw to be caught by outer catch block
+    }
 
 } catch (PDOException $e) {
     http_response_code(500);
