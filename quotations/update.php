@@ -23,13 +23,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate quote_id
-if (!isset($input['id']) || empty($input['id'])) {
+if (!isset($input['quotation_id']) || empty($input['quotation_id'])) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Quotation ID is required.']);
     exit;
 }
 
-$quote_id = $input['id'];
+$quote_id = $input['quotation_id'];
 
 try {
     // Check if quotation exists
@@ -50,10 +50,6 @@ try {
     $update_fields = [];
     $params = [];
 
-    if (isset($input['description'])) {
-        $update_fields[] = "description = ?";
-        $params[] = $input['description'];
-    }
     if (isset($input['status'])) {
         $update_fields[] = "status = ?";
         $params[] = $input['status'];
@@ -67,6 +63,18 @@ try {
         }
         $update_fields[] = "user_id = ?";
         $params[] = $input['user_id'];
+    }
+    if (isset($input['customer_name'])) {
+        $update_fields[] = "customer_name = ?";
+        $params[] = trim($input['customer_name']);
+    }
+    if (isset($input['customer_cell'])) {
+        $update_fields[] = "customer_cell = ?";
+        $params[] = trim($input['customer_cell']);
+    }
+    if (isset($input['customer_address'])) {
+        $update_fields[] = "customer_address = ?";
+        $params[] = trim($input['customer_address']);
     }
 
     // Update quotation if fields provided
@@ -90,14 +98,14 @@ try {
         ");
 
         foreach ($input['items'] as $item) {
-            if (!isset($item['quantity']) || !isset($item['price'])) {
+            if (!isset($item['quantity']) || !isset($item['unit_price'])) {
                 throw new Exception('Each item must have quantity and price.');
             }
 
             $sku = $item['sku'] ?? null;
             $item_description = $item['description'] ?? null;
             $quantity = (int)$item['quantity'];
-            $price = (float)$item['price'];
+            $price = (float)$item['unit_price'];
             $total = $quantity * $price;
 
             $stmt_item->execute([
@@ -116,20 +124,39 @@ try {
 
     // Fetch updated quotation with items
     $stmt = $pdo->prepare("
-        SELECT id, description, user_id, status, entry, created_at, updated_at
+        SELECT 
+            id, 
+            user_id, 
+            status, 
+            quote_no, 
+            customer_name, 
+            customer_cell, 
+            customer_address, 
+            sent_date, 
+            created_at, 
+            updated_at
         FROM quotations WHERE id = ?
     ");
     $stmt->execute([$quote_id]);
-    $quotation = $stmt->fetch();
+    $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Fetch quotation items
     $stmt = $pdo->prepare("
-        SELECT id, quote_id, sku, description, quantity, price, total
+        SELECT 
+            id, 
+            quote_id, 
+            sku, 
+            description, 
+            quantity, 
+            price, 
+            total, 
+            created_at, 
+            updated_at
         FROM quotation_items
         WHERE quote_id = ?
     ");
     $stmt->execute([$quote_id]);
-    $quotation['items'] = $stmt->fetchAll();
+    $quotation['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Calculate grand total
     $grand_total = array_sum(array_column($quotation['items'], 'total'));
