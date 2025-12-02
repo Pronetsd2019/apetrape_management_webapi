@@ -34,11 +34,20 @@ try {
             pfr.created_at,
             pfr.updated_at,
             u.name as user_name,
+            loc.plot as location_plot,
+            loc.street as location_street,
+            ct.name as  location_city,
+            rg.name as location_region,
+            co.name as location_country,
             u.surname as user_surname,
             u.email as user_email,
             u.cell as user_cell
         FROM part_find_requests pfr
         INNER JOIN users u ON pfr.user_id = u.id
+        INNER JOIN user_address loc ON pfr.user_id = loc.user_id
+        INNER JOIN city ct ON loc.city = ct.id
+        INNER JOIN region rg ON ct.region_id = rg.id
+        INNER JOIN country co ON rg.country_id = co.id
     ";
 
     $params = [];

@@ -39,7 +39,7 @@ $request_id = $input['id'];
 $status = $input['status'];
 
 // Validate status value
-$valid_statuses = ['pending', 'in_progress', 'completed', 'cancelled'];
+$valid_statuses = ['pending','failed', 'in_progress', 'completed', 'cancelled','thrown_out'];
 if (!in_array($status, $valid_statuses)) {
     http_response_code(400);
     echo json_encode([

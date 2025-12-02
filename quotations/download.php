@@ -1,8 +1,7 @@
 <?php
 /**
- * Send Quotation as PDF via Email
- * POST /quotations/send_quote.php
- * Body: { "quote_id": 123, "email": "customer@example.com" }
+ * Download Quotation as PDF with company info and logo using TCPDF
+ * GET /quotations/download_pdf.php?id={quote_id}
  */
 
 // Disable all error output to prevent interference with PDF generation
@@ -16,47 +15,32 @@ require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../vendor/tecnickcom/tcpdf/tcpdf.php';
 
 try {
-// Ensure the request is authenticated
-requireJwtAuth();
+    // Ensure the request is authenticated
+    requireJwtAuth();
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
         ob_end_clean();
-    http_response_code(405);
+        http_response_code(405);
         header('Content-Type: application/json');
         echo json_encode([
             'success' => false,
-            'message' => 'Method not allowed. Use POST.'
+            'message' => 'Method not allowed. Use GET.'
         ]);
-    exit;
-}
+        exit;
+    }
 
-// Get JSON input
-$input = json_decode(file_get_contents('php://input'), true);
-
-    if (!isset($input['quote_id']) || !is_numeric($input['quote_id'])) {
+    if (!isset($_GET['quote_id']) || !is_numeric($_GET['quote_id'])) {
         ob_end_clean();
-    http_response_code(400);
+        http_response_code(400);
         header('Content-Type: application/json');
         echo json_encode([
             'success' => false,
             'message' => 'Invalid or missing quotation ID.'
         ]);
-    exit;
-}
+        exit;
+    }
 
-    if (!isset($input['email']) || !filter_var($input['email'], FILTER_VALIDATE_EMAIL)) {
-        ob_end_clean();
-    http_response_code(400);
-        header('Content-Type: application/json');
-        echo json_encode([
-            'success' => false,
-            'message' => 'Invalid or missing email address.'
-        ]);
-    exit;
-}
-
-    $quoteId = (int)$input['quote_id'];
-    $email = trim($input['email']);
+    $quoteId = (int)$_GET['quote_id'];
 
     // Fetch quotation
     $stmt = $pdo->prepare("
@@ -148,7 +132,7 @@ EOD;
     // Table rows
     $tblRows = '';
     $subtotal = 0;
-            foreach ($items as $item) {
+    foreach ($items as $item) {
         $tblRows .= '<tr>';
         $tblRows .= '<td>' . htmlspecialchars($item['sku']) . '</td>';
         $tblRows .= '<td>' . htmlspecialchars($item['description']) . '</td>';
@@ -176,12 +160,12 @@ EOD;
 <tr>
     <td colspan="4" align="right"><b>VAT (15%)</b></td>
     <td align="right"><b>{$formattedVat}</b></td>
-                                </tr>
-                                <tr>
+</tr>
+<tr>
     <td colspan="4" align="right"><b>Grand Total</b></td>
     <td align="right"><b>{$formattedGrandTotal}</b></td>
-                                </tr>
-                        </table>
+</tr>
+</table>
 EOD;
 
     $pdf->writeHTML($tblHeader . $tblRows . $tblFooter, true, false, false, false, '');
@@ -191,72 +175,13 @@ EOD;
     $pdf->SetFont('helvetica', 'I', 10);
     $pdf->MultiCell(0, 5, "Thank you for your business! Please contact us for any inquiries.", 0, 'C');
 
-    // Generate PDF content
-    $pdfContent = $pdf->Output('Quotation_' . $quotation['quote_no'] . '.pdf', 'S'); // Return as string
+    // Clear any buffered output before sending PDF
+    ob_clean();
 
-    // Create temporary file for attachment
-    $tempFile = tempnam(sys_get_temp_dir(), 'quote_');
-    file_put_contents($tempFile, $pdfContent);
+    // Output PDF
+    $pdf->Output('Quotation_' . $quotation['quote_no'] . '.pdf', 'D'); // Force download
 
-    // Email headers
-    $boundary = md5(uniqid(time()));
-    $subject = 'Quotation #' . $quotation['quote_no'] . ' from APE Trape PTY Ltd';
-    $message = "Dear {$quotation['customer_name']},\n\nPlease find attached your quotation from APE Trape PTY Ltd.\n\nIf you have any questions, please contact us at info@apetrape.com or +268 76 000 000.\n\nBest regards,\nAPE Trape PTY Ltd";
-
-    $headers = [
-        'MIME-Version: 1.0',
-        'Content-Type: multipart/mixed; boundary="' . $boundary . '"',
-        'From: APE Trape PTY Ltd <sales@apetrape.com>',
-        'Reply-To: sales@apetrape.com',
-        'X-Mailer: PHP/' . phpversion()
-    ];
-
-    // Email body
-    $body = "--{$boundary}\r\n";
-    $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
-    $body .= $message . "\r\n\r\n";
-
-    // Attachment
-    $body .= "--{$boundary}\r\n";
-    $body .= "Content-Type: application/pdf; name=\"Quotation_{$quotation['quote_no']}.pdf\"\r\n";
-    $body .= "Content-Transfer-Encoding: base64\r\n";
-    $body .= "Content-Disposition: attachment; filename=\"Quotation_{$quotation['quote_no']}.pdf\"\r\n\r\n";
-    $body .= chunk_split(base64_encode($pdfContent)) . "\r\n";
-    $body .= "--{$boundary}--";
-
-    // Send email
-    $mailSent = mail($email, $subject, $body, implode("\r\n", $headers));
-
-    // Clean up temporary file
-    unlink($tempFile);
-
-    // Clear any buffered output
-    ob_end_clean();
-
-    if ($mailSent) {
-        // Update quotation sent_date if not already set
-        if (empty($quotation['sent_date'])) {
-            $stmtUpdate = $pdo->prepare("UPDATE quotations SET sent_date = NOW() WHERE id = ?");
-            $stmtUpdate->execute([$quoteId]);
-    }
-
-    http_response_code(200);
-        header('Content-Type: application/json');
-    echo json_encode([
-        'success' => true,
-            'message' => 'Quotation sent successfully to ' . $email,
-            'quote_id' => $quoteId,
-            'email' => $email
-        ]);
-    } else {
-        http_response_code(500);
-        header('Content-Type: application/json');
-        echo json_encode([
-            'success' => false,
-            'message' => 'Failed to send email. Please check server configuration.'
-        ]);
-    }
+    ob_end_flush(); // Send buffered content
     exit;
 
 } catch (PDOException $e) {
@@ -278,4 +203,3 @@ EOD;
     ]);
     exit;
 }
-?>
