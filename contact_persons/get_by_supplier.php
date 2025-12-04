@@ -38,31 +38,30 @@ try {
     }
 
     // Fetch contact persons for the supplier
-    $stmt = $pdo->prepare("
-        SELECT 
-            cp.id,
-            cp.supplier_id,
-            cp.name,
-            cp.surname,
-            cp.email,
-            cp.cell,
-            cp.created_at,
-            cp.updated_at,
-            COUNT(s.id) AS store_count
-        FROM contact_persons cp
-        LEFT JOIN stores s ON cp.supplier_id = s.supplier_id
-        WHERE cp.supplier_id = ?
-        GROUP BY 
-            cp.id,
-            cp.supplier_id,
-            cp.name,
-            cp.surname,
-            cp.email,
-            cp.cell,
-            cp.created_at,
-            cp.updated_at
-        ORDER BY cp.name ASC, cp.surname ASC
-    ");
+    $stmt = $pdo->prepare("SELECT 
+    cp.id,
+    cp.supplier_id,
+    cp.name,
+    cp.surname,
+    cp.email,
+    cp.cell,
+    cp.created_at,
+    cp.updated_at,
+    COUNT(s.id) AS store_count
+FROM contact_persons cp
+LEFT JOIN stores s ON cp.id = s.contact_person_id
+WHERE cp.supplier_id = ?
+GROUP BY 
+    cp.id,
+    cp.supplier_id,
+    cp.name,
+    cp.surname,
+    cp.email,
+    cp.cell,
+    cp.created_at,
+    cp.updated_at
+ORDER BY cp.name ASC, cp.surname ASC;
+");
     $stmt->execute([$supplier_id]);
     $contact_persons = $stmt->fetchAll();
 

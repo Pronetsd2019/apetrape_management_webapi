@@ -30,12 +30,14 @@ define('MAX_FAILED_ATTEMPTS', 5);
 define('LOCKOUT_DURATION_MINUTES', 30); // Lock account for 30 minutes
 
 try {
-    // Get admin by email (including lockout fields)
+    // Get admin by email (including lockout fields and role)
     $stmt = $pdo->prepare("
-        SELECT id, name, surname, email, password_hash, is_active, 
-               failed_attempts, locked_until
-        FROM admins 
-        WHERE email = ?
+        SELECT a.id, a.name, a.surname, a.email, a.password_hash, a.is_active,
+               a.failed_attempts, a.locked_until, a.role_id,
+               r.role_name, r.description as role_description, r.status as role_status
+        FROM admins a
+        LEFT JOIN roles r ON a.role_id = r.id
+        WHERE a.email = ?
     ");
     $stmt->execute([$input['email']]);
     $admin = $stmt->fetch();
@@ -151,11 +153,31 @@ try {
     // Reset failed attempts on successful login
     if ($admin['failed_attempts'] > 0 || $admin['locked_until']) {
         $stmt = $pdo->prepare("
-            UPDATE admins 
-            SET failed_attempts = 0, locked_until = NULL 
+            UPDATE admins
+            SET failed_attempts = 0, locked_until = NULL
             WHERE id = ?
         ");
         $stmt->execute([$admin['id']]);
+    }
+
+    // Get permissions for the user's role
+    $permissions = [];
+    if ($admin['role_id']) {
+        $stmtPermissions = $pdo->prepare("
+            SELECT
+                rmp.module_id,
+                m.module_name,
+                rmp.can_read,
+                rmp.can_create,
+                rmp.can_update,
+                rmp.can_delete
+            FROM role_module_permissions rmp
+            INNER JOIN modules m ON rmp.module_id = m.id
+            WHERE rmp.role_id = ?
+            ORDER BY m.module_name ASC
+        ");
+        $stmtPermissions->execute([$admin['role_id']]);
+        $permissions = $stmtPermissions->fetchAll(PDO::FETCH_ASSOC);
     }
 
     // Generate refresh token
@@ -199,15 +221,25 @@ try {
         ]
     );
 
-    // Return response with user info and access token
+    // Return response with user info, role, permissions and access token
     http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Login successful.',
         'data' => [
-            'name' => $admin['name'],
-            'surname' => $admin['surname'],
-            'email' => $admin['email'],
+            'user' => [
+                'id' => (int)$admin['id'],
+                'name' => $admin['name'],
+                'surname' => $admin['surname'],
+                'email' => $admin['email']
+            ],
+            'role' => $admin['role_id'] ? [
+                'id' => (int)$admin['role_id'],
+                'role_name' => $admin['role_name'],
+                'description' => $admin['role_description'],
+                'status' => $admin['role_status']
+            ] : null,
+            'permissions' => $permissions,
             'access_token' => $access_token,
             'token_type' => 'Bearer',
             'expires_in' => 900 // 15 minutes in seconds
