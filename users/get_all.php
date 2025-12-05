@@ -26,15 +26,31 @@ try {
 
     // Build query
     $sql = "
-        SELECT 
-            id,
-            name,
-            surname,
-            email,
-            cell,
-            created_at,
-            updated_at
-        FROM users
+        SELECT
+            u.id,
+            u.name,
+            u.surname,
+            u.email,
+            u.cell,
+            u.status,
+            u.created_at,
+            u.updated_at,
+            ua.id as address_id,
+            ua.street as address_street,
+            ua.plot as address_plot,
+            ua.created_at as address_created_at,
+            ua.updated_at as address_updated_at,
+            c.id as city_id,
+            c.name as city_name,
+            r.id as region_id,
+            r.name as region_name,
+            co.id as country_id,
+            co.name as country_name
+        FROM users u
+        LEFT JOIN user_address ua ON u.id = ua.user_id
+        LEFT JOIN city c ON ua.city = c.id
+        LEFT JOIN region r ON c.region_id = r.id
+        LEFT JOIN country co ON r.country_id = co.id
     ";
 
     $params = [];
@@ -57,11 +73,49 @@ try {
         $sql .= " WHERE " . implode(" AND ", $conditions);
     }
 
-    $sql .= " ORDER BY created_at DESC";
+    $sql .= " ORDER BY u.created_at DESC";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $users = $stmt->fetchAll();
+    $rawUsers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Group users and collect their addresses
+    $users = [];
+    foreach ($rawUsers as $row) {
+        $userId = $row['id'];
+
+        if (!isset($users[$userId])) {
+            // Create user entry
+            $users[$userId] = [
+                'id' => (int)$row['id'],
+                'name' => $row['name'],
+                'surname' => $row['surname'],
+                'email' => $row['email'],
+                'cell' => $row['cell'],
+                'status' => $row['status'],
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'addresses' => []
+            ];
+        }
+
+        // Add address if it exists
+        if ($row['address_id']) {
+            $users[$userId]['addresses'][] = [
+                'id' => (int)$row['address_id'],
+                'street' => $row['address_street'],
+                'plot' => $row['address_plot'],
+                'city' => $row['city_name'],
+                'region' => $row['region_name'],
+                'country' => $row['country_name'],
+                'created_at' => $row['address_created_at'],
+                'updated_at' => $row['address_updated_at']
+            ];
+        }
+    }
+
+    // Convert associative array back to indexed array
+    $users = array_values($users);
 
     http_response_code(200);
     echo json_encode([

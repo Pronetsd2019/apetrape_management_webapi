@@ -23,6 +23,12 @@ try {
     // Get optional query parameters for filtering
     $status = $_GET['status'] ?? null;
     $user_id = $_GET['user_id'] ?? null;
+    $sort = strtolower($_GET['sort'] ?? 'desc');
+
+    // Validate sort parameter
+    if (!in_array($sort, ['asc', 'desc'])) {
+        $sort = 'desc';
+    }
 
     // Build query for orders with user information
     $sql = "
@@ -49,6 +55,9 @@ try {
     $params = [];
     $conditions = [];
 
+    // Always exclude draft orders
+    $conditions[] = "o.status != 'draft'";
+
     if ($status) {
         $conditions[] = "o.status = ?";
         $params[] = $status;
@@ -63,7 +72,7 @@ try {
         $sql .= " WHERE " . implode(" AND ", $conditions);
     }
 
-    $sql .= " ORDER BY o.created_at DESC";
+    $sql .= " ORDER BY o.confirm_date " . strtoupper($sort);
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);

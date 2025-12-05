@@ -23,6 +23,12 @@ try {
     // Get optional query parameters for filtering
     $status = $_GET['status'] ?? null;
     $user_id = $_GET['user_id'] ?? null;
+    $sort = strtolower($_GET['sort'] ?? 'desc');
+
+    // Validate sort parameter
+    if (!in_array($sort, ['asc', 'desc'])) {
+        $sort = 'desc';
+    }
 
     // Build query
     $sql = "
@@ -67,7 +73,7 @@ try {
         $sql .= " WHERE " . implode(" AND ", $conditions);
     }
 
-    $sql .= " ORDER BY pfr.created_at DESC";
+    $sql .= " ORDER BY pfr.updated_at " . strtoupper($sort);
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
