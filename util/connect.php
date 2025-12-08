@@ -5,10 +5,15 @@
  */
 
 // Database configuration
-$db_host = '198.251.88.49';
-$db_name = 'apetrape_apetrape'; // Update with your database name
-$db_user = 'apetrape_banele'; // Update with your database user
-$db_pass = '#@13021proSD'; // Update with your database password
+//$db_host = '198.251.88.49';
+//$db_name = 'apetrape_apetrape'; // Update with your database name
+//$db_user = 'apetrape_banele'; // Update with your database user
+//$db_pass = '#@13021proSD'; // Update with your database password
+
+$db_host = 'localhost';
+$db_name = 'apetrape'; // Update with your database name
+$db_user = 'root'; // Update with your database user
+$db_pass = ''; // Update with your database password
 
 try {
     // Create PDO connection

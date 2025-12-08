@@ -4,18 +4,31 @@
  * POST /items/create.php
  */
 
- ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
-
-require_once __DIR__ . '/../util/connect.php';
-require_once __DIR__ . '/../middleware/auth_middleware.php';
-
-// Ensure the request is authenticated
-requireJwtAuth();
-
-header('Content-Type: application/json');
+ require_once __DIR__ . '/../util/connect.php';
+ require_once __DIR__ . '/../middleware/auth_middleware.php';
+ require_once __DIR__ . '/../util/check_permission.php';
+ 
+ // Ensure the request is authenticated
+ requireJwtAuth();
+ 
+ header('Content-Type: application/json');
+ 
+ // Get the authenticated user's ID from the JWT payload
+ $authUser = $GLOBALS['auth_user'] ?? null;
+ $userId = $authUser['admin_id'] ?? null;
+ 
+ if (!$userId) {
+     http_response_code(401);
+     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
+     exit;
+ }
+ 
+ // Check if the user has permission to create a country
+ if (!checkUserPermission($userId, 'stock management', 'write')) {
+     http_response_code(403);
+     echo json_encode(['success' => false, 'message' => 'You do not have permission to create stock items.']);
+     exit;
+ }
 
 // Only allow POST method
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

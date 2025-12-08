@@ -4,13 +4,31 @@
  * POST /suppliers/unlock.php
  */
 
-require_once __DIR__ . '/../util/connect.php';
-require_once __DIR__ . '/../middleware/auth_middleware.php';
-
-// Ensure the request is authenticated
-requireJwtAuth();
-
-header('Content-Type: application/json');
+ require_once __DIR__ . '/../util/connect.php';
+ require_once __DIR__ . '/../middleware/auth_middleware.php';
+ require_once __DIR__ . '/../util/check_permission.php';
+ 
+ // Ensure the request is authenticated
+ requireJwtAuth();
+ 
+ header('Content-Type: application/json');
+ 
+ // Get the authenticated user's ID from the JWT payload
+ $authUser = $GLOBALS['auth_user'] ?? null;
+ $userId = $authUser['admin_id'] ?? null;
+ 
+ if (!$userId) {
+     http_response_code(401);
+     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
+     exit;
+ }
+ 
+ // Check if the user has permission to create a country
+ if (!checkUserPermission($userId, 'suppliers', 'update')) {
+     http_response_code(403);
+     echo json_encode(['success' => false, 'message' => 'You do not have permission to update suppliers.']);
+     exit;
+ }
 
 // Only allow POST method
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

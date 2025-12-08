@@ -4,20 +4,31 @@
  * POST /stores/create.php
  */
 
-require_once __DIR__ . '/../util/connect.php';
-require_once __DIR__ . '/../middleware/auth_middleware.php';
-
-// Ensure the request is authenticated
-requireJwtAuth();
-
-header('Content-Type: application/json');
-
-// Only allow POST method
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use POST.']);
-    exit;
-}
+ require_once __DIR__ . '/../util/connect.php';
+ require_once __DIR__ . '/../middleware/auth_middleware.php';
+ require_once __DIR__ . '/../util/check_permission.php';
+ 
+ // Ensure the request is authenticated
+ requireJwtAuth();
+ 
+ header('Content-Type: application/json');
+ 
+ // Get the authenticated user's ID from the JWT payload
+ $authUser = $GLOBALS['auth_user'] ?? null;
+ $userId = $authUser['admin_id'] ?? null;
+ 
+ if (!$userId) {
+     http_response_code(401);
+     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
+     exit;
+ }
+ 
+ // Check if the user has permission to create a country
+ if (!checkUserPermission($userId, 'stores', 'create')) {
+     http_response_code(403);
+     echo json_encode(['success' => false, 'message' => 'You do not have permission to create stores.']);
+     exit;
+ }
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
