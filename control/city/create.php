@@ -24,7 +24,7 @@
  }
  
  // Check if the user has permission to create a country
- if (!checkUserPermission($userId, 'locations', 'write')) {
+ if (!checkUserPermission($userId, 'locations', 'create')) {
      http_response_code(403);
      echo json_encode(['success' => false, 'message' => 'You do not have permission to write a city.']);
      exit;

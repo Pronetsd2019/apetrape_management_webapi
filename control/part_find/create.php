@@ -24,7 +24,7 @@
  }
  
  // Check if the user has permission to create a country
- if (!checkUserPermission($userId, 'parts finder', 'write')) {
+ if (!checkUserPermission($userId, 'parts finder', 'create')) {
      http_response_code(403);
      echo json_encode(['success' => false, 'message' => 'You do not have permission to create part finds.']);
      exit;
