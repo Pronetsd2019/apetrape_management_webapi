@@ -12,7 +12,7 @@ ob_start(); // Start output buffering to prevent any output before PDF
 
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
-require_once __DIR__ . '/../vendor/tecnickcom/tcpdf/tcpdf.php';
+require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
 
 try {
     // Ensure the request is authenticated
