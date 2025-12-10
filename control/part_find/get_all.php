@@ -4,9 +4,10 @@
  * GET /part_find_requests/get_all.php
  */
 
- require_once __DIR__ . '/../util/connect.php';
- require_once __DIR__ . '/../middleware/auth_middleware.php';
- require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/error_logger.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -65,13 +66,17 @@ try {
             co.name as location_country,
             u.surname as user_surname,
             u.email as user_email,
-            u.cell as user_cell
+            u.cell as user_cell,
+            pfq.quote_id,
+            q.quote_no
         FROM part_find_requests pfr
         INNER JOIN users u ON pfr.user_id = u.id
         INNER JOIN user_address loc ON pfr.user_id = loc.user_id
         INNER JOIN city ct ON loc.city = ct.id
         INNER JOIN region rg ON ct.region_id = rg.id
         INNER JOIN country co ON rg.country_id = co.id
+        LEFT JOIN part_find_qoutations pfq ON pfr.id = pfq.part_find_id
+        LEFT JOIN quotations q ON pfq.quote_id = q.id
     ";
 
     $params = [];
@@ -136,6 +141,16 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('part_find/get_all', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error retrieving part find requests: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('part_find/get_all', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

@@ -6,6 +6,7 @@
  */
 
  require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
  require_once __DIR__ . '/../middleware/auth_middleware.php';
  require_once __DIR__ . '/../util/check_permission.php';
  
@@ -120,6 +121,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('admin_unlock', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

@@ -1,10 +1,11 @@
 <?php
 /**
- * Get All Items for Supplier Endpoint
- * GET /supplier/items/get_all.php
+ * Get Items by Store for Supplier Endpoint
+ * GET /supplier/items/get_by_store.php?store_id=1
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 require_once __DIR__ . '/../../control/middleware/auth_middleware.php';
 
 // Ensure the request is authenticated
@@ -30,7 +31,26 @@ if (!$supplierId) {
 }
 
 try {
-    // Get items for this supplier
+    $store_id = $_GET['store_id'] ?? null;
+
+    if (!$store_id) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Parameter "store_id" is required.']);
+        exit;
+    }
+
+    // Check if store exists and belongs to this supplier
+    $stmt = $pdo->prepare("SELECT id, name, supplier_id FROM stores WHERE id = ? AND supplier_id = ?");
+    $stmt->execute([$store_id, $supplierId]);
+    $store = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$store) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => 'Store not found or does not belong to this supplier.']);
+        exit;
+    }
+
+    // Get items for this store that belong to this supplier
     $stmt = $pdo->prepare("
         SELECT
             i.id,
@@ -45,6 +65,8 @@ try {
             i.price,
             i.discount,
             i.cost_price,
+            si.quantity AS store_quantity,
+            si.created_at AS added_to_store_date,
             (
                 SELECT src
                 FROM item_images ii
@@ -52,19 +74,21 @@ try {
                 ORDER BY ii.id ASC
                 LIMIT 1
             ) AS image_url
-        FROM items i
+        FROM store_items si
+        INNER JOIN items i ON si.item_id = i.id
         LEFT JOIN suppliers s ON i.supplier_id = s.id
-        WHERE i.supplier_id = ?
+        WHERE si.store_id = ? AND i.supplier_id = ?
         ORDER BY i.created_at DESC
     ");
-    $stmt->execute([$supplierId]);
+    $stmt->execute([$store_id, $supplierId]);
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     if (empty($items)) {
         http_response_code(200);
         echo json_encode([
             'success' => true,
-            'message' => 'No items found for this supplier.',
+            'message' => 'No items found for this store.',
+            'store' => $store,
             'data' => [],
             'count' => 0
         ]);
@@ -74,7 +98,7 @@ try {
     $itemIds = array_column($items, 'id');
     $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
 
-    // Fetch supported models
+    // Fetch supported models (only for items belonging to this supplier)
     $stmtModels = $pdo->prepare("
         SELECT
             ivm.item_id,
@@ -88,10 +112,11 @@ try {
         FROM item_vehicle_models ivm
         INNER JOIN vehicle_models vm ON ivm.vehicle_model_id = vm.id
         INNER JOIN manufacturers m ON vm.manufacturer_id = m.id
-        WHERE ivm.item_id IN ($placeholders)
+        INNER JOIN items i ON ivm.item_id = i.id
+        WHERE ivm.item_id IN ($placeholders) AND i.supplier_id = ?
         ORDER BY m.name ASC, vm.model_name ASC
     ");
-    $stmtModels->execute($itemIds);
+    $stmtModels->execute(array_merge($itemIds, [$supplierId]));
     $links = $stmtModels->fetchAll(PDO::FETCH_ASSOC);
 
     $modelsByItem = [];
@@ -101,14 +126,15 @@ try {
         $modelsByItem[$itemId][] = $link;
     }
 
-    // Fetch all images
+    // Fetch all images (only for items belonging to this supplier)
     $stmtImages = $pdo->prepare("
-        SELECT item_id, id, alt, src, created_at, updated_at
-        FROM item_images
-        WHERE item_id IN ($placeholders)
-        ORDER BY item_id ASC, id ASC
+        SELECT ii.item_id, ii.id, ii.alt, ii.src, ii.created_at, ii.updated_at
+        FROM item_images ii
+        INNER JOIN items i ON ii.item_id = i.id
+        WHERE ii.item_id IN ($placeholders) AND i.supplier_id = ?
+        ORDER BY ii.item_id ASC, ii.id ASC
     ");
-    $stmtImages->execute($itemIds);
+    $stmtImages->execute(array_merge($itemIds, [$supplierId]));
     $images = $stmtImages->fetchAll(PDO::FETCH_ASSOC);
 
     $imagesByItem = [];
@@ -118,34 +144,11 @@ try {
         $imagesByItem[$itemId][] = $image;
     }
 
-    // Fetch stores for items
-    $stmtStores = $pdo->prepare("
-        SELECT
-            si.item_id,
-            si.store_id,
-            s.name AS store_name,
-            s.physical_address
-        FROM store_items si
-        INNER JOIN stores s ON si.store_id = s.id
-        WHERE si.item_id IN ($placeholders)
-        ORDER BY si.item_id ASC
-    ");
-    $stmtStores->execute($itemIds);
-    $stores = $stmtStores->fetchAll(PDO::FETCH_ASSOC);
-
-    $storesByItem = [];
-    foreach ($stores as $store) {
-        $itemId = $store['item_id'];
-        unset($store['item_id']);
-        $storesByItem[$itemId][] = $store;
-    }
-
     // Attach data to items
     foreach ($items as &$item) {
         $itemId = $item['id'];
         $item['supported_models'] = $modelsByItem[$itemId] ?? [];
         $item['images'] = $imagesByItem[$itemId] ?? [];
-        $item['stores'] = $storesByItem[$itemId] ?? [];
     }
     unset($item);
 
@@ -153,11 +156,13 @@ try {
     echo json_encode([
         'success' => true,
         'message' => 'Items fetched successfully.',
+        'store' => $store,
         'data' => $items,
         'count' => count($items)
     ]);
 
 } catch (PDOException $e) {
+    logException('supplier_item_get_by_store', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

@@ -12,8 +12,17 @@ error_reporting(0);
 ob_start(); // Start output buffering to prevent any output before PDF
 
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/email_config.php';
 require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
+require_once __DIR__ . '/../../vendor/phpmailer/phpmailer/src/PHPMailer.php';
+require_once __DIR__ . '/../../vendor/phpmailer/phpmailer/src/SMTP.php';
+require_once __DIR__ . '/../../vendor/phpmailer/phpmailer/src/Exception.php';
+
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\SMTP;
+use PHPMailer\PHPMailer\Exception;
 
 try {
 // Ensure the request is authenticated
@@ -194,42 +203,44 @@ EOD;
     // Generate PDF content
     $pdfContent = $pdf->Output('Quotation_' . $quotation['quote_no'] . '.pdf', 'S'); // Return as string
 
-    // Create temporary file for attachment
-    $tempFile = tempnam(sys_get_temp_dir(), 'quote_');
-    file_put_contents($tempFile, $pdfContent);
+    // Get email configuration
+    $emailConfig = getEmailConfig();
 
-    // Email headers
-    $boundary = md5(uniqid(time()));
-    $subject = 'Quotation #' . $quotation['quote_no'] . ' from APE Trape PTY Ltd';
-    $message = "Dear {$quotation['customer_name']},\n\nPlease find attached your quotation from APE Trape PTY Ltd.\n\nIf you have any questions, please contact us at info@apetrape.com or +268 76 000 000.\n\nBest regards,\nAPE Trape PTY Ltd";
+    // Create PHPMailer instance
+    $mail = new PHPMailer(true);
 
-    $headers = [
-        'MIME-Version: 1.0',
-        'Content-Type: multipart/mixed; boundary="' . $boundary . '"',
-        'From: APE Trape PTY Ltd <sales@apetrape.com>',
-        'Reply-To: sales@apetrape.com',
-        'X-Mailer: PHP/' . phpversion()
-    ];
+    try {
+        // Server settings
+        $mail->isSMTP();
+        $mail->Host = $emailConfig['smtp_host'];
+        $mail->SMTPAuth = true;
+        $mail->Username = $emailConfig['smtp_username'];
+        $mail->Password = $emailConfig['smtp_password'];
+        $mail->SMTPSecure = $emailConfig['smtp_secure'];
+        $mail->Port = $emailConfig['smtp_port'];
+        $mail->CharSet = 'UTF-8';
 
-    // Email body
-    $body = "--{$boundary}\r\n";
-    $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $body .= "Content-Transfer-Encoding: 7bit\r\n\r\n";
-    $body .= $message . "\r\n\r\n";
+        // Recipients
+        $mail->setFrom($emailConfig['from_email'], $emailConfig['from_name']);
+        $mail->addAddress($email);
+        $mail->addReplyTo($emailConfig['reply_to_email'], $emailConfig['reply_to_name']);
 
-    // Attachment
-    $body .= "--{$boundary}\r\n";
-    $body .= "Content-Type: application/pdf; name=\"Quotation_{$quotation['quote_no']}.pdf\"\r\n";
-    $body .= "Content-Transfer-Encoding: base64\r\n";
-    $body .= "Content-Disposition: attachment; filename=\"Quotation_{$quotation['quote_no']}.pdf\"\r\n\r\n";
-    $body .= chunk_split(base64_encode($pdfContent)) . "\r\n";
-    $body .= "--{$boundary}--";
+        // Content
+        $mail->isHTML(false); // Plain text email
+        $mail->Subject = 'Quotation #' . $quotation['quote_no'] . ' from APE Trape PTY Ltd';
+        $mail->Body = "Dear {$quotation['customer_name']},\n\nPlease find attached your quotation from APE Trape PTY Ltd.\n\nIf you have any questions, please contact us at info@apetrape.com or +268 76 000 000.\n\nBest regards,\nAPE Trape PTY Ltd";
 
-    // Send email
-    $mailSent = mail($email, $subject, $body, implode("\r\n", $headers));
+        // Add PDF attachment
+        $mail->addStringAttachment($pdfContent, 'Quotation_' . $quotation['quote_no'] . '.pdf', 'base64', 'application/pdf');
 
-    // Clean up temporary file
-    unlink($tempFile);
+        // Send email
+        $mailSent = $mail->send();
+        $mailError = '';
+
+    } catch (PHPMailer\PHPMailer\Exception $e) {
+        $mailSent = false;
+        $mailError = $mail->ErrorInfo;
+    }
 
     // Clear any buffered output
     ob_end_clean();
@@ -239,12 +250,12 @@ EOD;
         if (empty($quotation['sent_date'])) {
             $stmtUpdate = $pdo->prepare("UPDATE quotations SET sent_date = NOW() WHERE id = ?");
             $stmtUpdate->execute([$quoteId]);
-    }
+        }
 
-    http_response_code(200);
+        http_response_code(200);
         header('Content-Type: application/json');
-    echo json_encode([
-        'success' => true,
+        echo json_encode([
+            'success' => true,
             'message' => 'Quotation sent successfully to ' . $email,
             'quote_id' => $quoteId,
             'email' => $email
@@ -254,12 +265,13 @@ EOD;
         header('Content-Type: application/json');
         echo json_encode([
             'success' => false,
-            'message' => 'Failed to send email. Please check server configuration.'
+            'message' => 'Failed to send email. ' . ($mailError ?: 'Please check server configuration.')
         ]);
     }
     exit;
 
 } catch (PDOException $e) {
+    logException('quotations_send_quote', $e);
     ob_end_clean(); // Clear any output before error
     http_response_code(500);
     header('Content-Type: application/json');
@@ -269,6 +281,7 @@ EOD;
     ]);
     exit;
 } catch (Exception $e) {
+    logException('quotations_send_quote', $e);
     ob_end_clean(); // Clear any output before error
     http_response_code(500);
     header('Content-Type: application/json');

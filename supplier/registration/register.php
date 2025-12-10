@@ -6,6 +6,7 @@
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 
 header('Content-Type: application/json');
 
@@ -184,6 +185,7 @@ try {
     }
 
 } catch (PDOException $e) {
+    logException('supplier_registration_register', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/jwt.php';
+require_once __DIR__ . '/../util/error_logger.php';
 header('Content-Type: application/json');
 
 // Only allow POST method
@@ -48,7 +49,13 @@ try {
 
     // Check if admin exists
     if (!$admin) {
-        // Can't log invalid email since admin_id is required
+        // Log failed login attempt (invalid email)
+        logError('auth/login', 'Login attempt with invalid email', [
+            'email' => $input['email'],
+            'ip_address' => $ip_address,
+            'user_agent' => $user_agent
+        ]);
+        
         http_response_code(401);
         echo json_encode(['success' => false, 'message' => 'Invalid email or password.']);
         exit;
@@ -58,6 +65,15 @@ try {
     if ($admin['locked_until'] && strtotime($admin['locked_until']) > time()) {
         $locked_until = strtotime($admin['locked_until']);
         $remaining_minutes = ceil(($locked_until - time()) / 60);
+        
+        logError('auth/login', 'Login attempt on locked account', [
+            'admin_id' => $admin['id'],
+            'email' => $admin['email'],
+            'locked_until' => $admin['locked_until'],
+            'remaining_minutes' => $remaining_minutes,
+            'ip_address' => $ip_address,
+            'user_agent' => $user_agent
+        ]);
         
         http_response_code(423); // 423 Locked
         echo json_encode([
@@ -145,6 +161,13 @@ try {
         ");
         $stmt->execute([$admin['id'], $ip_address, $user_agent]);
         
+        logError('auth/login', 'Login attempt on inactive account', [
+            'admin_id' => $admin['id'],
+            'email' => $admin['email'],
+            'ip_address' => $ip_address,
+            'user_agent' => $user_agent
+        ]);
+        
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is inactive.']);
         exit;
@@ -208,13 +231,24 @@ try {
     $access_token = generateJWT($token_payload, 15);
 
     // Set refresh token as HTTP-only cookie
+    // Get the current host to set domain-specific cookie
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $cookieDomain = '';
+    
+    // Extract subdomain from host (e.g., admin.apetrape.com -> admin.apetrape.com)
+    // This ensures cookies are isolated to the specific subdomain
+    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
+        // Use the full host as domain to isolate cookies to this subdomain
+        $cookieDomain = $host;
+    }
+    
     setcookie(
         'refresh_token',
         $refresh_token,
         [
             'expires' => $refresh_token_expiry,
             'path' => '/',
-            'domain' => '',
+            'domain' => $cookieDomain,
             'secure' => false, // Set to true in production with HTTPS
             'httponly' => true,
             'samesite' => 'Strict'
@@ -247,6 +281,16 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('auth/login', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error during login: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('auth/login', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

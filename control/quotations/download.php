@@ -11,6 +11,7 @@ error_reporting(0);
 ob_start(); // Start output buffering to prevent any output before PDF
 
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
 
@@ -185,6 +186,7 @@ EOD;
     exit;
 
 } catch (PDOException $e) {
+    logException('quotations_download', $e);
     ob_end_clean(); // Clear any output before error
     http_response_code(500);
     header('Content-Type: application/json');
@@ -194,6 +196,7 @@ EOD;
     ]);
     exit;
 } catch (Exception $e) {
+    logException('quotations_download', $e);
     ob_end_clean(); // Clear any output before error
     http_response_code(500);
     header('Content-Type: application/json');

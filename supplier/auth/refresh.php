@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 require_once __DIR__ . '/../../control/util/jwt.php';
 header('Content-Type: application/json');
 
@@ -42,7 +43,7 @@ try {
     }
 
     // Check if supplier is still active
-    if ($token_data['status'] !== 'active') {
+    if ($token_data['status'] !== 1) {
         // Delete the refresh token
         $stmt = $pdo->prepare("DELETE FROM supplier_refresh_tokens WHERE token = ?");
         $stmt->execute([$refresh_token]);
@@ -85,13 +86,24 @@ try {
     ");
     $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
 
+    // Get the current host to set domain-specific cookie
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $cookieDomain = '';
+    
+    // Extract subdomain from host (e.g., supplier.apetrape.com -> supplier.apetrape.com)
+    // This ensures cookies are isolated to the specific subdomain
+    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
+        // Use the full host as domain to isolate cookies to this subdomain
+        $cookieDomain = $host;
+    }
+    
     setcookie(
         'supplier_refresh_token',
         $new_refresh_token,
         [
             'expires' => $refresh_token_expiry,
             'path' => '/',
-            'domain' => '',
+            'domain' => $cookieDomain,
             'secure' => false, // Set to true in production with HTTPS
             'httponly' => true,
             'samesite' => 'Strict'
@@ -112,6 +124,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('supplier_auth_refresh', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

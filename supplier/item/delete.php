@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 require_once __DIR__ . '/../../control/middleware/auth_middleware.php';
 
 // Ensure the request is authenticated
@@ -104,6 +105,7 @@ try {
     }
 
 } catch (PDOException $e) {
+    logException('supplier_item_delete', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

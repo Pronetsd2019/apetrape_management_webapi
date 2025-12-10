@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 require_once __DIR__ . '/../../control/middleware/auth_middleware.php';
 
 // Ensure the request is authenticated
@@ -30,13 +31,15 @@ if (!$supplierId) {
 }
 
 try {
-    // Get supplier details
+    // Get supplier details with counts
     $stmt = $pdo->prepare("
         SELECT
-            id, name, email, cellphone, telephone,
-            created_at, updated_at, status, reg
-        FROM suppliers
-        WHERE id = ?
+            s.id, s.name, s.email, s.cellphone, s.telephone,
+            s.created_at, s.updated_at, s.status, s.reg,
+            (SELECT COUNT(*) FROM stores WHERE supplier_id = s.id) AS number_of_stores,
+            (SELECT COUNT(*) FROM items WHERE supplier_id = s.id) AS total_items
+        FROM suppliers s
+        WHERE s.id = ?
     ");
     $stmt->execute([$supplierId]);
     $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -48,11 +51,15 @@ try {
     }
 
     // Check if supplier is active
-    if ($supplier['status'] !== 'active') {
+    if ($supplier['status'] !== 1) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is not active.']);
         exit;
     }
+
+    // Convert counts to integers
+    $supplier['store_count'] = (int) $supplier['store_count'];
+    $supplier['item_count'] = (int) $supplier['item_count'];
 
     http_response_code(200);
     echo json_encode([
@@ -62,6 +69,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('supplier_profile_get_details', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

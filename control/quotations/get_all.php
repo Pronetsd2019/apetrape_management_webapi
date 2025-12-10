@@ -4,9 +4,10 @@
  * GET /quotations/get_all.php
  */
 
- require_once __DIR__ . '/../util/connect.php';
- require_once __DIR__ . '/../middleware/auth_middleware.php';
- require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/error_logger.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -118,6 +119,16 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('quotations/get_all', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error fetching quotations: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('quotations/get_all', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

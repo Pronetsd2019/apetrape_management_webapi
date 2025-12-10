@@ -4,9 +4,10 @@
  * POST /part_find_requests/create.php
  */
 
- require_once __DIR__ . '/../util/connect.php';
- require_once __DIR__ . '/../middleware/auth_middleware.php';
- require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/error_logger.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -23,7 +24,7 @@
      exit;
  }
  
- // Check if the user has permission to create a country
+ // Check if the user has permission to create part finds
  if (!checkUserPermission($userId, 'parts finder', 'create')) {
      http_response_code(403);
      echo json_encode(['success' => false, 'message' => 'You do not have permission to create part finds.']);
@@ -103,6 +104,16 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('part_find/create', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error creating part find request: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('part_find/create', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

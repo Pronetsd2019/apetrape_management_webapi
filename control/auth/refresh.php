@@ -6,6 +6,7 @@
 
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/jwt.php';
+require_once __DIR__ . '/../util/error_logger.php';
 header('Content-Type: application/json');
 
 // Only allow POST method
@@ -36,8 +37,13 @@ try {
     $token_data = $stmt->fetch();
 
     if (!$token_data) {
+        logError('auth/refresh', 'Invalid or expired refresh token', [
+            'token_preview' => substr($refresh_token, 0, 10) . '...',
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        ]);
+        
         http_response_code(401);
-        echo json_encode(['success' => false, 'token' => $refresh_token, 'message' => 'Invalid or expired refresh token.']);
+        echo json_encode(['success' => false, 'message' => 'Invalid or expired refresh token.']);
         exit;
     }
 
@@ -46,6 +52,11 @@ try {
         // Delete the refresh token
         $stmt = $pdo->prepare("DELETE FROM refresh_tokens WHERE token = ?");
         $stmt->execute([$refresh_token]);
+        
+        logError('auth/refresh', 'Token refresh attempt for inactive account', [
+            'admin_id' => $token_data['admin_id'],
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        ]);
         
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is inactive.']);
@@ -84,13 +95,24 @@ try {
     ");
     $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
 
+    // Get the current host to set domain-specific cookie
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $cookieDomain = '';
+    
+    // Extract subdomain from host (e.g., admin.apetrape.com -> admin.apetrape.com)
+    // This ensures cookies are isolated to the specific subdomain
+    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
+        // Use the full host as domain to isolate cookies to this subdomain
+        $cookieDomain = $host;
+    }
+    
     setcookie(
         'refresh_token',
         $new_refresh_token,
         [
             'expires' => $refresh_token_expiry,
             'path' => '/',
-            'domain' => '',
+            'domain' => $cookieDomain,
             'secure' => false, // Set to true in production with HTTPS
             'httponly' => true,
             'samesite' => 'Strict'
@@ -111,6 +133,16 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('auth/refresh', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error refreshing token: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('auth/refresh', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

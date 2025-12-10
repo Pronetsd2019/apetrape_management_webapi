@@ -7,6 +7,7 @@ composer.lock
 .env.local
 .env.*.local
 *.env
+!.env.example
 
 # Sensitive files and extensions
 *.key

@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
 
@@ -114,18 +115,18 @@ try {
                 continue;
             }
 
-            // Update application status to rejected (2)
+            // Update application status to rejected (2) and store reason
             $stmt = $pdo->prepare("
                 UPDATE supplier_application
-                SET status = 2, updated_at = NOW()
+                SET status = 2, reason = ?, updated_at = NOW()
                 WHERE id = ?
             ");
-            $result = $stmt->execute([$applicationId]);
+            $result = $stmt->execute([$reason, $applicationId]);
 
             if ($result && $stmt->rowCount() > 0) {
                 // Fetch updated application
                 $stmt = $pdo->prepare("
-                    SELECT id, name, email, cell, telephone, address, reg, status, created_at, updated_at
+                    SELECT id, name, email, cell, telephone, address, reg, reason, status, created_at, updated_at
                     FROM supplier_application
                     WHERE id = ?
                 ");
@@ -146,6 +147,7 @@ try {
             }
 
         } catch (PDOException $e) {
+    logException('supplier_applications_reject', $e);
             $results['failed'][] = [
                 'application_id' => $applicationId,
                 'reason' => 'Database error: ' . $e->getMessage()
@@ -189,6 +191,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('supplier_applications_reject', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

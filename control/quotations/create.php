@@ -4,9 +4,10 @@
  * POST /quotations/create.php
  */
 
- require_once __DIR__ . '/../util/connect.php';
- require_once __DIR__ . '/../middleware/auth_middleware.php';
- require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/error_logger.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -40,10 +41,10 @@
      exit;
  }
  
- // Check if the user has permission to create a country
- if (!checkUserPermission($userId, 'parts finder', 'write')) {
+ // Check if the user has permission to create quotations (which may be linked to part finds)
+ if (!checkUserPermission($userId, 'quotations', 'create')) {
      http_response_code(403);
-     echo json_encode(['success' => false, 'message' => 'You do not have permission to create part finds.']);
+     echo json_encode(['success' => false, 'message' => 'You do not have permission to create quotations.']);
      exit;
  }
 
@@ -126,6 +127,31 @@ try {
     $stmt = $pdo->prepare("UPDATE quotations SET quote_no = ? WHERE id = ?");
     $stmt->execute([$quote_no, $quote_id]);
 
+    // If part_request_id is provided, link quotation to part find request
+    if (isset($input['part_request_id']) && !empty($input['part_request_id'])) {
+        $part_request_id = (int)$input['part_request_id'];
+        
+        // Validate that part_request_id exists
+        $stmt = $pdo->prepare("SELECT id FROM part_find_requests WHERE id = ?");
+        $stmt->execute([$part_request_id]);
+        if ($stmt->fetch()) {
+            // Insert into part_find_qoutations table
+            $stmt = $pdo->prepare("
+                INSERT INTO part_find_qoutations (part_find_id, quote_id)
+                VALUES (?, ?)
+            ");
+            $stmt->execute([$part_request_id, $quote_id]);
+            
+            // Update part_find_requests status to 'quoted'
+            $stmt = $pdo->prepare("
+                UPDATE part_find_requests 
+                SET status = 'quoted', updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmt->execute([$part_request_id]);
+        }
+    }
+
     // Insert quotation items
     $stmt_item = $pdo->prepare("
         INSERT INTO quotation_items (quote_id, sku, description, quantity, price, total)
@@ -205,11 +231,27 @@ try {
         'data' => $quotation
     ]);
 
-} catch (Exception $e) {
+} catch (PDOException $e) {
+    logException('quotations_create', $e);
     // Rollback transaction on error
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
+    logException('quotations/create', $e, ['quote_id' => $quote_id ?? null]);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Error creating quotation: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('quotations_create', $e);
+    // Rollback transaction on error
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    logException('quotations/create', $e, ['quote_id' => $quote_id ?? null]);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,

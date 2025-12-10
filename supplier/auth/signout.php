@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../../control/util/connect.php';
+require_once __DIR__ . '/../../control/util/error_logger.php';
 header('Content-Type: application/json');
 
 // Only allow POST method
@@ -24,14 +25,25 @@ try {
         $stmt->execute([$refresh_token]);
     }
 
-    // Clear/expire the supplier refresh token cookie
+    // Get the current host to set domain-specific cookie (must match login domain)
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $cookieDomain = '';
+    
+    // Extract subdomain from host (e.g., supplier.apetrape.com -> supplier.apetrape.com)
+    // This ensures cookies are isolated to the specific subdomain
+    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
+        // Use the full host as domain to isolate cookies to this subdomain
+        $cookieDomain = $host;
+    }
+    
+    // Clear/expire the supplier refresh token cookie (must use same domain as when set)
     setcookie(
         'supplier_refresh_token',
         '',
         [
             'expires' => time() - 3600, // Set to past time to delete
             'path' => '/',
-            'domain' => '',
+            'domain' => $cookieDomain,
             'secure' => false, // Set to true in production with HTTPS
             'httponly' => true,
             'samesite' => 'Strict'
@@ -45,6 +57,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    logException('supplier_auth_signout', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,
