@@ -166,11 +166,33 @@ try {
         $imagesByItem[$itemId][] = $image;
     }
     
+    // Fetch categories for items
+    $stmtCategories = $pdo->prepare("
+        SELECT 
+            ic.item_id,
+            c.id AS category_id,
+            c.name AS category_name
+        FROM item_category ic
+        INNER JOIN categories c ON ic.category_id = c.id
+        WHERE ic.item_id IN ($placeholders)
+        ORDER BY ic.item_id ASC, c.name ASC
+    ");
+    $stmtCategories->execute($itemIds);
+    $categories = $stmtCategories->fetchAll(PDO::FETCH_ASSOC);
+    
+    $categoriesByItem = [];
+    foreach ($categories as $category) {
+        $itemId = $category['item_id'];
+        unset($category['item_id']);
+        $categoriesByItem[$itemId][] = $category;
+    }
+    
     // Attach data to items
     foreach ($items as &$item) {
         $itemId = $item['id'];
         $item['supported_models'] = $modelsByItem[$itemId] ?? [];
         $item['images'] = $imagesByItem[$itemId] ?? [];
+        $item['categories'] = $categoriesByItem[$itemId] ?? [];
     }
     unset($item);
     

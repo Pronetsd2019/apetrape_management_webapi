@@ -107,31 +107,32 @@ try {
     // Hash password
     $password_hash = password_hash($input['password'], PASSWORD_DEFAULT);
 
-    // Insert supplier
-    $stmt = $pdo->prepare("
-        INSERT INTO suppliers (name, email, cellphone, telephone, password_hash)
-        VALUES (?, ?, ?, ?, ?)
-    ");
-
     $email = $input['email'];
     $name = $input['supplier_name'];
     $cellphone = $input['cell'];
     $telephone = $input['telephone'] ?? null;
+    $reg = isset($input['reg']) && !empty($input['reg']) ? trim($input['reg']) : null;
 
+    // Insert supplier
+    $stmt = $pdo->prepare("
+        INSERT INTO suppliers (name, email, cellphone, telephone, password_hash, reg)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ");
 
     $stmt->execute([
         $name,
         $email,
         $cellphone,
         $telephone,
-        $password_hash
+        $password_hash,
+        $reg
     ]);
 
     $supplier_id = $pdo->lastInsertId();
 
     // Fetch created supplier
     $stmt = $pdo->prepare("
-        SELECT id, name, email, cellphone, telephone, created_at, updated_at
+        SELECT id, name, email, cellphone, telephone, reg, created_at, updated_at
         FROM suppliers WHERE id = ?
     ");
     $stmt->execute([$supplier_id]);

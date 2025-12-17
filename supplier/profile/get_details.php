@@ -67,7 +67,8 @@ try {
     }
 
     // Check if supplier is active
-    if ($supplier['status'] !== 1) {
+    $status = (int)$supplier['status'];
+    if ($status !== 1) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is not active.']);
         exit;

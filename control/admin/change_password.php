@@ -16,33 +16,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 /**
- * Change Supplier Password Endpoint
- * POST /supplier/profile/change_password.php
+ * Change Admin Password Endpoint
+ * PUT /control/admin/change_password.php
  */
 
-require_once __DIR__ . '/../../control/util/connect.php';
-require_once __DIR__ . '/../../control/util/error_logger.php';
-require_once __DIR__ . '/../../control/middleware/auth_middleware.php';
+require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
+require_once __DIR__ . '/../middleware/auth_middleware.php';
 
 // Ensure the request is authenticated
 requireJwtAuth();
 
 header('Content-Type: application/json');
 
-// Only allow POST method
+// Only allow PUT method
 if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
     http_response_code(405);
-    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use POST.']);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use PUT.']);
     exit;
 }
 
-// Get the authenticated supplier's ID from the JWT payload
+// Get the authenticated admin's ID from the JWT payload
 $authUser = $GLOBALS['auth_user'] ?? null;
-$supplierId = $authUser['supplier_id'] ?? null;
+$adminId = $authUser['admin_id'] ?? null;
 
-if (!$supplierId) {
+if (!$adminId) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated supplier.']);
+    echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated admin.']);
     exit;
 }
 
@@ -81,31 +81,31 @@ if (strlen($input['new_password']) < 6) {
 }
 
 try {
-    // Get supplier details including password hash
+    // Get admin details including password hash
     $stmt = $pdo->prepare("
-        SELECT id, email, password_hash, status
-        FROM suppliers
+        SELECT id, email, password_hash, is_active
+        FROM admins
         WHERE id = ?
     ");
-    $stmt->execute([$supplierId]);
-    $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->execute([$adminId]);
+    $admin = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$supplier) {
+    if (!$admin) {
         http_response_code(404);
-        echo json_encode(['success' => false, 'message' => 'Supplier not found.']);
+        echo json_encode(['success' => false, 'message' => 'Admin not found.']);
         exit;
     }
 
-    // Check if supplier is active
-    $status = (int)$supplier['status'];
-    if ($status !== 1) {
+    // Check if admin is active
+    $is_active = (int)$admin['is_active'];
+    if ($is_active !== 1) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is not active.']);
         exit;
     }
 
     // Verify current password
-    $password_correct = password_verify($input['current_password'], $supplier['password_hash']);
+    $password_correct = password_verify($input['current_password'], $admin['password_hash']);
 
     if (!$password_correct) {
         http_response_code(401);
@@ -118,11 +118,11 @@ try {
 
     // Update password and reset lock stats
     $stmt = $pdo->prepare("
-        UPDATE suppliers
+        UPDATE admins
         SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = NOW()
         WHERE id = ?
     ");
-    $stmt->execute([$new_password_hash, $supplierId]);
+    $stmt->execute([$new_password_hash, $adminId]);
 
     http_response_code(200);
     echo json_encode([
@@ -131,7 +131,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
-    logException('supplier_profile_change_password', $e);
+    logException('admin_change_password', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,

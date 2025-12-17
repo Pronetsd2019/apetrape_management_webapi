@@ -41,16 +41,8 @@ try {
         $stmt->execute([$refresh_token]);
     }
 
-    // Get the current host to set domain-specific cookie (must match login domain)
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $cookieDomain = '';
-    
-    // Extract subdomain from host (e.g., supplier.apetrape.com -> supplier.apetrape.com)
-    // This ensures cookies are isolated to the specific subdomain
-    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
-        // Use the full host as domain to isolate cookies to this subdomain
-        $cookieDomain = $host;
-    }
+    // Use .apetrape.com domain to match the domain used when setting the cookie
+    $cookieDomain = '.apetrape.com';
     
     // Clear/expire the supplier refresh token cookie (must use same domain as when set)
     setcookie(
@@ -60,9 +52,9 @@ try {
             'expires' => time() - 3600, // Set to past time to delete
             'path' => '/',
             'domain' => $cookieDomain,
-            'secure' => false, // Set to true in production with HTTPS
+            'secure' => true, // HTTPS required for cross-domain cookies
             'httponly' => true,
-            'samesite' => 'Strict'
+            'samesite' => 'None' // Required for cross-site cookies
         ]
     );
 

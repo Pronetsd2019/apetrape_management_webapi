@@ -96,6 +96,31 @@ foreach ($stores_payload as $entry) {
 }
 $storeIds = array_values(array_unique(array_filter($storeIds, fn($v) => $v !== 0)));
 
+// Parse categories input
+$categories_input = $_POST['categories'] ?? '[]';
+if (is_array($categories_input)) {
+    $categories_payload = $categories_input;
+} else {
+    $categories_payload = json_decode($categories_input ?: '[]', true);
+}
+if (!is_array($categories_payload)) {
+    respondBadRequest("Field 'categories' must be a valid array or JSON array when provided.");
+}
+
+// Extract category IDs
+$categoryIds = [];
+foreach ($categories_payload as $entry) {
+    if (is_array($entry)) {
+        $category_id = $entry['category_id'] ?? $entry['categoryId'] ?? $entry['id'] ?? null;
+    } else {
+        $category_id = $entry;
+    }
+    if ($category_id !== null && $category_id !== '') {
+        $categoryIds[] = (int)$category_id;
+    }
+}
+$categoryIds = array_values(array_unique(array_filter($categoryIds, fn($v) => $v !== 0)));
+
 if ($name === '') {
     respondBadRequest("Field 'name' is required.");
 }
@@ -201,6 +226,23 @@ try {
         }
     }
 
+    // Link categories to item_category table (many-to-many relationship)
+    if (!empty($categoryIds)) {
+        $stmtInsertCategory = $pdo->prepare("
+            INSERT INTO item_category (item_id, category_id)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE item_id = VALUES(item_id)
+        ");
+        $stmtCheckCategory = $pdo->prepare("SELECT id FROM categories WHERE id = ?");
+
+        foreach ($categoryIds as $category_id) {
+            $stmtCheckCategory->execute([$category_id]);
+            if ($stmtCheckCategory->fetch()) {
+                $stmtInsertCategory->execute([$item_id, $category_id]);
+            }
+        }
+    }
+
     // Handle images
     $uploadedImages = [];
     if (isset($_FILES['images'])) {
@@ -298,8 +340,20 @@ try {
     $stmt->execute([$item_id]);
     $images = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Fetch categories
+    $stmt = $pdo->prepare("
+        SELECT c.id AS category_id, c.name AS category_name
+        FROM item_category ic
+        INNER JOIN categories c ON ic.category_id = c.id
+        WHERE ic.item_id = ?
+        ORDER BY c.name ASC
+    ");
+    $stmt->execute([$item_id]);
+    $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
     $item['supported_models'] = $models;
     $item['images'] = $images;
+    $item['categories'] = $categories;
 
     http_response_code(201);
     echo json_encode([

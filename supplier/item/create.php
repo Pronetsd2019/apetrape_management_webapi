@@ -240,6 +240,9 @@ foreach ($categories_payload as $entry) {
 }
 $categoryIds = array_values(array_unique(array_filter($categoryIds, fn($v) => $v !== 0)));
 
+// Append supplier_id to SKU to avoid conflicts between different suppliers
+$sku = $sku . '_' . $supplierId;
+
 $pdo->beginTransaction();
 
 try {
@@ -319,15 +322,20 @@ try {
         }
     }
 
-    // Link categories (assuming items table has category_id field, or create item_categories table if many-to-many)
-    // For now, using category_id field in items table - if multiple categories needed, use first one
+    // Link categories to item_category table (many-to-many relationship)
     if (!empty($categoryIds)) {
-        $category_id = $categoryIds[0]; // Use first category
-        $stmt = $pdo->prepare("SELECT id FROM categories WHERE id = ?");
-        $stmt->execute([$category_id]);
-        if ($stmt->fetch()) {
-            $stmtUpdate = $pdo->prepare("UPDATE items SET category_id = ? WHERE id = ?");
-            $stmtUpdate->execute([$category_id, $itemId]);
+        $stmtInsertCategory = $pdo->prepare("
+            INSERT INTO item_category (item_id, category_id)
+            VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE item_id = VALUES(item_id)
+        ");
+        $stmtCheckCategory = $pdo->prepare("SELECT id FROM categories WHERE id = ?");
+
+        foreach ($categoryIds as $category_id) {
+            $stmtCheckCategory->execute([$category_id]);
+            if ($stmtCheckCategory->fetch()) {
+                $stmtInsertCategory->execute([$itemId, $category_id]);
+            }
         }
     }
 
@@ -395,7 +403,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT
             id, supplier_id, name, description, sku, price, discount,
-            sale_price, cost_price, is_universal, created_at, updated_at, category_id
+            sale_price, cost_price, is_universal, created_at, updated_at
         FROM items
         WHERE id = ?
     ");
@@ -429,6 +437,16 @@ try {
     ");
     $stmt->execute([$itemId]);
     $item['stores'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Fetch categories
+    $stmt = $pdo->prepare("
+        SELECT c.id AS category_id, c.name AS category_name
+        FROM item_category ic
+        INNER JOIN categories c ON ic.category_id = c.id
+        WHERE ic.item_id = ?
+    ");
+    $stmt->execute([$itemId]);
+    $item['categories'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Fetch images
     $stmt = $pdo->prepare("

@@ -7,7 +7,8 @@ if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-    header("Access-Control-Allow-Headers: Content-Type, Authorization");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization, Accept");
+    header("Vary: Origin"); 
 }
 
 // Handle preflight OPTIONS request
@@ -180,7 +181,8 @@ try {
 
     // If this is from application table and password is correct, check application status
     if ($isFromApplication) {
-        if ($supplier['status'] == 3) {
+        $appStatus = (int)$supplier['status'];
+        if ($appStatus == 3) {
             // Application was rejected
             http_response_code(403);
             echo json_encode([
@@ -202,7 +204,9 @@ try {
     }
 
     // Check if supplier is active
-    if ($supplier['status'] !== 1 ) {
+    // Convert to int to handle string "1" from database
+    $status = (int)$supplier['status'];
+    if ($status !== 1) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Account is not active.']);
         exit;
@@ -240,16 +244,9 @@ try {
     $access_token = generateJWT($token_payload, 15);
 
     // Set refresh token as HTTP-only cookie
-    // Get the current host to set domain-specific cookie
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $cookieDomain = '';
-    
-    // Extract subdomain from host (e.g., supplier.apetrape.com -> supplier.apetrape.com)
-    // This ensures cookies are isolated to the specific subdomain
-    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
-        // Use the full host as domain to isolate cookies to this subdomain
-        $cookieDomain = $host;
-    }
+    // Use .apetrape.com domain to share cookies across all subdomains
+    // This allows cookies set by webapi.apetrape.com to be accessible by supplier.apetrape.com
+    $cookieDomain = '.apetrape.com';
     
     setcookie(
         'supplier_refresh_token',
@@ -258,9 +255,9 @@ try {
             'expires' => $refresh_token_expiry,
             'path' => '/',
             'domain' => $cookieDomain,
-            'secure' => false, // Set to true in production with HTTPS
+            'secure' => true, // HTTPS required for cross-domain cookies
             'httponly' => true,
-            'samesite' => 'Strict'
+            'samesite' => 'None' // Required for cross-site cookies
         ]
     );
 

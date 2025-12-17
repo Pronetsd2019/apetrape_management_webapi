@@ -56,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 try {
     $stmt = $pdo->query("
-        SELECT id AS supplier_id, name AS supplier_name
+        SELECT id AS supplier_id, name AS supplier_name, reg
         FROM suppliers
         ORDER BY name ASC
     ");

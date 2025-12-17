@@ -1,9 +1,13 @@
 <?php
 
-// CORS headers for subdomain support
+// CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
 
-if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) {
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -111,29 +115,44 @@ try {
     ");
     $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
 
-    // Get the current host to set domain-specific cookie
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $cookieDomain = '';
-    
-    // Extract subdomain from host (e.g., admin.apetrape.com -> admin.apetrape.com)
-    // This ensures cookies are isolated to the specific subdomain
-    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
-        // Use the full host as domain to isolate cookies to this subdomain
-        $cookieDomain = $host;
-    }
-    
-    setcookie(
-        'refresh_token',
-        $new_refresh_token,
-        [
-            'expires' => $refresh_token_expiry,
-            'path' => '/',
-            'domain' => $cookieDomain,
-            'secure' => false, // Set to true in production with HTTPS
-            'httponly' => true,
-            'samesite' => 'Strict'
-        ]
+    // Detect environment: localhost vs production
+    $isLocalhost = (
+        $_SERVER['HTTP_HOST'] === 'localhost' || 
+        strpos($_SERVER['HTTP_HOST'], '127.0.0.1') !== false ||
+        strpos($_SERVER['HTTP_HOST'], 'localhost:') === 0
     );
+    
+    if ($isLocalhost) {
+        // Localhost settings - no domain restriction, no secure flag
+        setcookie(
+            'refresh_token',
+            $new_refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]
+        );
+    } else {
+        // Production settings - .apetrape.com domain to share cookies across all subdomains
+        // This allows cookies set by webapi.apetrape.com to be accessible by admin.apetrape.com and supplier.apetrape.com
+        // Admin uses 'refresh_token' cookie name, supplier uses 'supplier_refresh_token' - so they don't conflict
+        $cookieDomain = '.apetrape.com';
+        
+        setcookie(
+            'refresh_token',
+            $new_refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'domain' => $cookieDomain,
+                'secure' => true, // HTTPS required for cross-domain cookies
+                'httponly' => true,
+                'samesite' => 'None' // Required for cross-site cookies
+            ]
+        );
+    }
 
     // Return new access token
     http_response_code(200);

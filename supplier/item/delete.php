@@ -73,22 +73,6 @@ try {
         exit;
     }
 
-    // Check if item is currently in any orders (can't delete items that are in orders)
-    $stmt = $pdo->prepare("SELECT COUNT(*) as order_count FROM order_items WHERE item_id = ?");
-    $stmt->execute([$item_id]);
-    $orderCheck = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($orderCheck['order_count'] > 0) {
-        http_response_code(409);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Cannot delete item that is currently in orders.',
-            'item' => $item,
-            'orders_count' => (int)$orderCheck['order_count']
-        ]);
-        exit;
-    }
-
     // Remove store associations
     $stmt = $pdo->prepare("DELETE FROM store_items WHERE item_id = ?");
     $stmt->execute([$item_id]);

@@ -4,16 +4,41 @@
  * Shared database connection file for all API endpoints
  */
 
-// Database configuration
-$db_host = '198.251.88.49';
-$db_name = 'apetrape_apetrape'; // Update with your database name
-$db_user = 'apetrape_banele'; // Update with your database user
-$db_pass = '#@13021proSD'; // Update with your database password
+// Load .env file if it exists
+$envFile = dirname(dirname(__DIR__)) . '/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        // Skip comments
+        if (strpos(trim($line), '#') === 0) {
+            continue;
+        }
+        
+        // Parse KEY=VALUE format
+        if (strpos($line, '=') !== false) {
+            list($key, $value) = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+            
+            // Remove quotes if present
+            if ((substr($value, 0, 1) === '"' && substr($value, -1) === '"') ||
+                (substr($value, 0, 1) === "'" && substr($value, -1) === "'")) {
+                $value = substr($value, 1, -1);
+            }
+            
+            // Set environment variable if not already set
+            if (!isset($_ENV[$key])) {
+                $_ENV[$key] = $value;
+            }
+        }
+    }
+}
 
-//$db_host = 'localhost';
-//$db_name = 'apetrape'; // Update with your database name
-//$db_user = 'root'; // Update with your database user
-//$db_pass = ''; // Update with your database password
+// Database configuration - loaded from environment variables
+$db_host = $_ENV['DB_HOST'] ?? 'localhost';
+$db_name = $_ENV['DB_NAME'] ?? 'apetrape';
+$db_user = $_ENV['DB_USER'] ?? 'root';
+$db_pass = $_ENV['DB_PASS'] ?? '';
 
 try {
     // Create PDO connection

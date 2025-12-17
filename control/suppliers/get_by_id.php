@@ -75,6 +75,7 @@ try {
             s.cellphone,
             s.telephone,
             s.email,
+            s.reg,
             s.status,
             s.locked_until,
             s.created_at AS entry_date,
@@ -84,7 +85,7 @@ try {
         LEFT JOIN stores st ON st.supplier_id = s.id
         LEFT JOIN items i ON i.supplier_id = s.id
         WHERE s.id = ?
-        GROUP BY s.id, s.name, s.cellphone, s.email, s.status, s.locked_until, s.created_at
+        GROUP BY s.id, s.name, s.cellphone, s.email, s.reg, s.status, s.locked_until, s.created_at
     ");
 
     $stmt->execute([$supplierId]);

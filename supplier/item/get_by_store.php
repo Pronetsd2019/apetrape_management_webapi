@@ -160,11 +160,19 @@ try {
         $imagesByItem[$itemId][] = $image;
     }
 
-    // Attach data to items
+    // Attach data to items and remove supplier_id suffix from SKU
     foreach ($items as &$item) {
         $itemId = $item['id'];
         $item['supported_models'] = $modelsByItem[$itemId] ?? [];
         $item['images'] = $imagesByItem[$itemId] ?? [];
+        
+        // Remove _supplier_id suffix from SKU before sending to supplier
+        if (isset($item['sku']) && !empty($item['sku'])) {
+            $suffix = '_' . $supplierId;
+            if (substr($item['sku'], -strlen($suffix)) === $suffix) {
+                $item['sku'] = substr($item['sku'], 0, -strlen($suffix));
+            }
+        }
     }
     unset($item);
 

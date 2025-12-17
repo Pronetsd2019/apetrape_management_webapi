@@ -104,6 +104,10 @@ try {
         $update_fields[] = "telephone = ?";
         $params[] = $input['telephone'];
     }
+    if (isset($input['reg'])) {
+        $update_fields[] = "reg = ?";
+        $params[] = trim($input['reg']);
+    }
 
     if (empty($update_fields)) {
         http_response_code(400);
@@ -121,7 +125,7 @@ try {
 
     // Fetch updated supplier
     $stmt = $pdo->prepare("
-        SELECT id, name, email, cellphone, telephone, created_at, updated_at
+        SELECT id, name, email, cellphone, telephone, reg, created_at, updated_at
         FROM suppliers WHERE id = ?
     ");
     $stmt->execute([$supplier_id]);

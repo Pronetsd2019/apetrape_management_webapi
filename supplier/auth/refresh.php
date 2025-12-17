@@ -35,9 +35,27 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Get refresh token from cookie
 $refresh_token = $_COOKIE['supplier_refresh_token'] ?? null;
 
+// Debug: Log cookie information
+logError('supplier_auth_refresh', 'Cookie check', [
+    'cookie_exists' => isset($_COOKIE['supplier_refresh_token']),
+    'cookie_value_preview' => $refresh_token ? substr($refresh_token, 0, 10) . '...' : null,
+    'all_cookies' => array_keys($_COOKIE),
+    'http_host' => $_SERVER['HTTP_HOST'] ?? null,
+    'http_origin' => $_SERVER['HTTP_ORIGIN'] ?? null,
+    'request_method' => $_SERVER['REQUEST_METHOD'] ?? null
+]);
+
 if (!$refresh_token) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Refresh token not found.']);
+    echo json_encode([
+        'success' => false, 
+        'message' => 'Refresh token not found.',
+        'debug' => [
+            'cookies_received' => array_keys($_COOKIE),
+            'http_host' => $_SERVER['HTTP_HOST'] ?? null,
+            'http_origin' => $_SERVER['HTTP_ORIGIN'] ?? null
+        ]
+    ]);
     exit;
 }
 
@@ -59,7 +77,9 @@ try {
     }
 
     // Check if supplier is still active
-    if ($token_data['status'] !== 1) {
+    // Convert to int to handle string "1" from database
+    $status = (int)$token_data['status'];
+    if ($status !== 1) {
         // Delete the refresh token
         $stmt = $pdo->prepare("DELETE FROM supplier_refresh_tokens WHERE token = ?");
         $stmt->execute([$refresh_token]);
@@ -102,16 +122,9 @@ try {
     ");
     $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
 
-    // Get the current host to set domain-specific cookie
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $cookieDomain = '';
-    
-    // Extract subdomain from host (e.g., supplier.apetrape.com -> supplier.apetrape.com)
-    // This ensures cookies are isolated to the specific subdomain
-    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
-        // Use the full host as domain to isolate cookies to this subdomain
-        $cookieDomain = $host;
-    }
+    // Use .apetrape.com domain to share cookies across all subdomains
+    // This allows cookies set by webapi.apetrape.com to be accessible by supplier.apetrape.com
+    $cookieDomain = '.apetrape.com';
     
     setcookie(
         'supplier_refresh_token',
@@ -120,9 +133,9 @@ try {
             'expires' => $refresh_token_expiry,
             'path' => '/',
             'domain' => $cookieDomain,
-            'secure' => false, // Set to true in production with HTTPS
+            'secure' => true, // HTTPS required for cross-domain cookies
             'httponly' => true,
-            'samesite' => 'Strict'
+            'samesite' => 'None' // Required for cross-site cookies
         ]
     );
 

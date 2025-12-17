@@ -1,9 +1,13 @@
 <?php
 
-// CORS headers for subdomain support
+// CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
 
-if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) {
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -168,6 +172,30 @@ try {
         }
     }
 
+    // Check if user's role is blocked/inactive
+    if ($admin['role_id'] && isset($admin['role_status']) && $admin['role_status'] != 1) {
+        // Log failed login attempt (blocked role)
+        $stmt = $pdo->prepare("
+            INSERT INTO login_logs (admin_id, ip_address, user_agent, success)
+            VALUES (?, ?, ?, 0)
+        ");
+        $stmt->execute([$admin['id'], $ip_address, $user_agent]);
+        
+        logError('auth/login', 'Login attempt with blocked/inactive role', [
+            'admin_id' => $admin['id'],
+            'email' => $admin['email'],
+            'role_id' => $admin['role_id'],
+            'role_name' => $admin['role_name'],
+            'role_status' => $admin['role_status'],
+            'ip_address' => $ip_address,
+            'user_agent' => $user_agent
+        ]);
+        
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Your role has been blocked. Please contact administrator.']);
+        exit;
+    }
+
     // Check if admin is active
     if (!$admin['is_active']) {
         // Log failed login attempt (inactive account)
@@ -247,29 +275,44 @@ try {
     $access_token = generateJWT($token_payload, 15);
 
     // Set refresh token as HTTP-only cookie
-    // Get the current host to set domain-specific cookie
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $cookieDomain = '';
-    
-    // Extract subdomain from host (e.g., admin.apetrape.com -> admin.apetrape.com)
-    // This ensures cookies are isolated to the specific subdomain
-    if (preg_match('/^([^.]+\.)?apetrape\.com$/', $host, $matches)) {
-        // Use the full host as domain to isolate cookies to this subdomain
-        $cookieDomain = $host;
-    }
-    
-    setcookie(
-        'refresh_token',
-        $refresh_token,
-        [
-            'expires' => $refresh_token_expiry,
-            'path' => '/',
-            'domain' => $cookieDomain,
-            'secure' => false, // Set to true in production with HTTPS
-            'httponly' => true,
-            'samesite' => 'Strict'
-        ]
+    // Detect environment: localhost vs production
+    $isLocalhost = (
+        $_SERVER['HTTP_HOST'] === 'localhost' || 
+        strpos($_SERVER['HTTP_HOST'], '127.0.0.1') !== false ||
+        strpos($_SERVER['HTTP_HOST'], 'localhost:') === 0
     );
+    
+    if ($isLocalhost) {
+        // Localhost settings - no domain restriction, no secure flag
+        setcookie(
+            'refresh_token',
+            $refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]
+        );
+    } else {
+        // Production settings - .apetrape.com domain to share cookies across all subdomains
+        // This allows cookies set by webapi.apetrape.com to be accessible by admin.apetrape.com and supplier.apetrape.com
+        // Admin uses 'refresh_token' cookie name, supplier uses 'supplier_refresh_token' - so they don't conflict
+        $cookieDomain = '.apetrape.com';
+        
+        setcookie(
+            'refresh_token',
+            $refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'domain' => $cookieDomain,
+                'secure' => true, // HTTPS required for cross-domain cookies
+                'httponly' => true,
+                'samesite' => 'None' // Required for cross-site cookies
+            ]
+        );
+    }
 
     // Return response with user info, role, permissions and access token
     http_response_code(200);
