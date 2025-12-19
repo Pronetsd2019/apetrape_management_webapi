@@ -1,4 +1,7 @@
 <?php
+
+// Set timezone for consistent datetime handling
+require_once __DIR__ . '/../util/timezone_config.php';
 /**
  * Authentication Middleware
  * Use requireJwtAuth() at the top of any endpoint that requires authentication.

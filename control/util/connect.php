@@ -4,6 +4,9 @@
  * Shared database connection file for all API endpoints
  */
 
+// Set timezone for consistent datetime handling
+require_once __DIR__ . '/timezone_config.php';
+
 // Load .env file if it exists
 $envFile = dirname(dirname(__DIR__)) . '/.env';
 if (file_exists($envFile)) {

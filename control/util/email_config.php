@@ -1,4 +1,7 @@
 <?php
+
+// Set timezone for consistent datetime handling
+require_once __DIR__ . '/timezone_config.php';
 /**
  * Email Configuration Utility
  * Configure SMTP settings here or via environment variables

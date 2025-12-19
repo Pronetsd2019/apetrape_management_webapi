@@ -1,4 +1,7 @@
 <?php
+
+// Set timezone for consistent datetime handling
+require_once __DIR__ . '/timezone_config.php';
 /**
  * JWT Utility Functions
  * Uses Firebase JWT library for generating and validating tokens

@@ -1,9 +1,13 @@
 <?php
 
-// CORS headers for subdomain support
+// CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
 
-if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) {
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -41,22 +45,43 @@ try {
         $stmt->execute([$refresh_token]);
     }
 
-    // Use .apetrape.com domain to match the domain used when setting the cookie
-    $cookieDomain = '.apetrape.com';
-    
-    // Clear/expire the supplier refresh token cookie (must use same domain as when set)
-    setcookie(
-        'supplier_refresh_token',
-        '',
-        [
-            'expires' => time() - 3600, // Set to past time to delete
-            'path' => '/',
-            'domain' => $cookieDomain,
-            'secure' => true, // HTTPS required for cross-domain cookies
-            'httponly' => true,
-            'samesite' => 'None' // Required for cross-site cookies
-        ]
+    // Detect environment: localhost vs production
+    $isLocalhost = (
+        ($_SERVER['HTTP_HOST'] ?? '') === 'localhost' ||
+        strpos(($_SERVER['HTTP_HOST'] ?? ''), '127.0.0.1') !== false ||
+        strpos(($_SERVER['HTTP_HOST'] ?? ''), 'localhost:') === 0
     );
+    
+    // Clear/expire the supplier refresh token cookie (must use same settings as when set)
+    if ($isLocalhost) {
+        // Localhost settings
+        setcookie(
+            'supplier_refresh_token',
+            '',
+            [
+                'expires' => time() - 3600, // Set to past time to delete
+                'path' => '/',
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]
+        );
+    } else {
+        // Production settings - use .apetrape.com domain to match the domain used when setting the cookie
+        $cookieDomain = '.apetrape.com';
+        
+        setcookie(
+            'supplier_refresh_token',
+            '',
+            [
+                'expires' => time() - 3600, // Set to past time to delete
+                'path' => '/',
+                'domain' => $cookieDomain,
+                'secure' => true, // HTTPS required for cross-domain cookies
+                'httponly' => true,
+                'samesite' => 'None' // Required for cross-site cookies
+            ]
+        );
+    }
 
     http_response_code(200);
     echo json_encode([

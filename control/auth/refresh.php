@@ -103,17 +103,46 @@ try {
 
     $access_token = generateJWT($token_payload, 15);
 
-    // Rotate refresh token (issue new token and update cookie)
+    // Rotate refresh token (concurrency-safe).
+    // If two refresh requests happen at the same time, only one should rotate the token.
     $refresh_token_ttl = 7 * 24 * 60 * 60; // 7 days
     $new_refresh_token = generateRefreshToken();
-    $refresh_token_expiry = time() + $refresh_token_ttl;
+    $new_refresh_token_expiry = time() + $refresh_token_ttl;
 
+    // Compare-and-swap update: only rotate if the stored token is still the one we validated.
     $stmt = $pdo->prepare("
         UPDATE refresh_tokens
         SET token = ?, expires_at = FROM_UNIXTIME(?)
-        WHERE id = ?
+        WHERE id = ? AND token = ? AND expires_at > NOW()
     ");
-    $stmt->execute([$new_refresh_token, $refresh_token_expiry, $token_data['id']]);
+    $stmt->execute([$new_refresh_token, $new_refresh_token_expiry, $token_data['id'], $refresh_token]);
+
+    // Determine which token/expiry we should set as cookie.
+    // If another request already rotated it, fetch the current token and set it (prevents logout/race).
+    $cookie_token = $new_refresh_token;
+    $cookie_expiry = $new_refresh_token_expiry;
+
+    if ($stmt->rowCount() === 0) {
+        $stmtCurrent = $pdo->prepare("
+            SELECT token, UNIX_TIMESTAMP(expires_at) AS expires_ts
+            FROM refresh_tokens
+            WHERE id = ?
+        ");
+        $stmtCurrent->execute([$token_data['id']]);
+        $current = $stmtCurrent->fetch(PDO::FETCH_ASSOC);
+
+        if (!$current || empty($current['token'])) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => 'Invalid or expired refresh token.']);
+            exit;
+        }
+
+        $cookie_token = $current['token'];
+        $cookie_expiry = (int)$current['expires_ts'];
+    }
+
+    // For response metadata
+    $refresh_token_ttl = max(0, (int)$cookie_expiry - time());
 
     // Detect environment: localhost vs production
     $isLocalhost = (
@@ -126,9 +155,9 @@ try {
         // Localhost settings - no domain restriction, no secure flag
         setcookie(
             'refresh_token',
-            $new_refresh_token,
+            $cookie_token,
             [
-                'expires' => $refresh_token_expiry,
+                'expires' => $cookie_expiry,
                 'path' => '/',
                 'httponly' => true,
                 'samesite' => 'Lax'
@@ -142,9 +171,9 @@ try {
         
         setcookie(
             'refresh_token',
-            $new_refresh_token,
+            $cookie_token,
             [
-                'expires' => $refresh_token_expiry,
+                'expires' => $cookie_expiry,
                 'path' => '/',
                 'domain' => $cookieDomain,
                 'secure' => true, // HTTPS required for cross-domain cookies

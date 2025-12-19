@@ -1,9 +1,13 @@
 <?php
 
-// CORS headers for subdomain support
+// CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
 
-if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) {
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -244,22 +248,43 @@ try {
     $access_token = generateJWT($token_payload, 15);
 
     // Set refresh token as HTTP-only cookie
-    // Use .apetrape.com domain to share cookies across all subdomains
-    // This allows cookies set by webapi.apetrape.com to be accessible by supplier.apetrape.com
-    $cookieDomain = '.apetrape.com';
-    
-    setcookie(
-        'supplier_refresh_token',
-        $refresh_token,
-        [
-            'expires' => $refresh_token_expiry,
-            'path' => '/',
-            'domain' => $cookieDomain,
-            'secure' => true, // HTTPS required for cross-domain cookies
-            'httponly' => true,
-            'samesite' => 'None' // Required for cross-site cookies
-        ]
+    // Detect environment: localhost vs production
+    $isLocalhost = (
+        ($_SERVER['HTTP_HOST'] ?? '') === 'localhost' ||
+        strpos(($_SERVER['HTTP_HOST'] ?? ''), '127.0.0.1') !== false ||
+        strpos(($_SERVER['HTTP_HOST'] ?? ''), 'localhost:') === 0
     );
+
+    if ($isLocalhost) {
+        // Localhost settings - no domain restriction, no secure flag
+        setcookie(
+            'supplier_refresh_token',
+            $refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'httponly' => true,
+                'samesite' => 'Lax'
+            ]
+        );
+    } else {
+        // Production settings - .apetrape.com domain to share cookies across all subdomains
+        // This allows cookies set by webapi.apetrape.com to be accessible by supplier.apetrape.com
+        $cookieDomain = '.apetrape.com';
+
+        setcookie(
+            'supplier_refresh_token',
+            $refresh_token,
+            [
+                'expires' => $refresh_token_expiry,
+                'path' => '/',
+                'domain' => $cookieDomain,
+                'secure' => true, // HTTPS required for cross-domain cookies
+                'httponly' => true,
+                'samesite' => 'None' // Required for cross-site cookies
+            ]
+        );
+    }
 
     // Return response with supplier info and access token
     http_response_code(200);

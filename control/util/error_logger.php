@@ -1,4 +1,7 @@
 <?php
+
+// Set timezone for consistent datetime handling
+require_once __DIR__ . '/timezone_config.php';
 /**
  * Error Logger Utility
  * Centralized error logging for all endpoints
