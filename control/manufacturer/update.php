@@ -93,6 +93,13 @@ try {
         $params[] = $input['manufacturer_name'];
     }
 
+    if (isset($input['img'])) {
+        // Allow empty string to clear the logo
+        $img = $input['img'] === '' ? null : trim($input['img']);
+        $update_fields[] = "img = ?";
+        $params[] = $img;
+    }
+
     if (empty($update_fields)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'No fields to update.']);
@@ -107,7 +114,7 @@ try {
     $stmt->execute($params);
 
     // Fetch updated manufacturer
-    $stmt = $pdo->prepare("SELECT id, name, created_at, updated_at FROM manufacturers WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, img, created_at, updated_at FROM manufacturers WHERE id = ?");
     $stmt->execute([$manufacturer_id]);
     $manufacturer = $stmt->fetch();
 

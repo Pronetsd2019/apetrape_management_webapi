@@ -96,7 +96,7 @@ try {
     $category_id = (int)$input['id'];
     
     // Check if category exists
-    $stmt = $pdo->prepare("SELECT id, name, parent_id FROM categories WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, parent_id, img FROM categories WHERE id = ?");
     $stmt->execute([$category_id]);
     $current = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -108,6 +108,7 @@ try {
     
     $update_fields = [];
     $params = [];
+    $old_img_path = $current['img'];
     
     if (isset($input['name']) && trim($input['name']) !== '') {
         $name = trim($input['name']);
@@ -182,6 +183,25 @@ try {
         $params[] = (int)$input['sort_order'];
     }
     
+    if (isset($input['img'])) {
+        // Allow empty string to clear the image
+        $new_img = $input['img'] === '' ? null : trim($input['img']);
+        
+        // If updating img and old img exists and is a local file, delete it
+        if ($old_img_path && $new_img !== $old_img_path) {
+            // Check if old image is a local file path (not a URL)
+            if (!preg_match('/^https?:\/\//', $old_img_path)) {
+                $old_file_path = $_SERVER['DOCUMENT_ROOT'] . '/' . ltrim($old_img_path, '/');
+                if (file_exists($old_file_path) && is_file($old_file_path)) {
+                    @unlink($old_file_path);
+                }
+            }
+        }
+        
+        $update_fields[] = "img = ?";
+        $params[] = $new_img;
+    }
+    
     if (empty($update_fields)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'No fields to update.']);
@@ -203,6 +223,7 @@ try {
             pc.name AS parent_name,
             c.slug,
             c.sort_order,
+            c.img,
             c.created_at,
             c.updated_at
         FROM categories c

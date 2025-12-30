@@ -75,20 +75,23 @@ try {
         exit;
     }
 
-    // Insert manufacturer
+    // Prepare insert statement with optional img field
+    $img = isset($input['img']) && !empty($input['img']) ? trim($input['img']) : null;
+    
     $stmt = $pdo->prepare("
-        INSERT INTO manufacturers (name)
-        VALUES (?)
+        INSERT INTO manufacturers (name, img)
+        VALUES (?, ?)
     ");
 
     $stmt->execute([
-        $input['manufacturer_name']
+        $input['manufacturer_name'],
+        $img
     ]);
 
     $manufacturer_id = $pdo->lastInsertId();
 
     // Fetch created manufacturer
-    $stmt = $pdo->prepare("SELECT id, name, created_at, updated_at FROM manufacturers WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, img, created_at, updated_at FROM manufacturers WHERE id = ?");
     $stmt->execute([$manufacturer_id]);
     $manufacturer = $stmt->fetch();
 

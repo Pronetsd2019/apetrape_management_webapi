@@ -1,0 +1,229 @@
+<?php
+
+// CORS headers for subdomain support and localhost
+$allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
+
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
+    header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
+    header("Access-Control-Allow-Credentials: true");
+    header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
+    header("Access-Control-Allow-Headers: Content-Type, Authorization");
+}
+
+// Handle preflight OPTIONS request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+/**
+ * Mobile Support Feedback Endpoint
+ * POST /mobile/v1/support/feedback.php
+ * Handles feedback submissions from both authenticated and unauthenticated users
+ */
+
+require_once __DIR__ . '/../../../control/util/connect.php';
+require_once __DIR__ . '/../../../control/util/jwt.php';
+require_once __DIR__ . '/../../../control/util/error_logger.php';
+
+header('Content-Type: application/json');
+
+// Only allow POST method
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use POST.']);
+    exit;
+}
+
+// Get JSON input
+$input = json_decode(file_get_contents('php://input'), true);
+
+// Validate required fields
+if (!isset($input['rating']) || !is_numeric($input['rating'])) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Rating is required and must be a number.'
+    ]);
+    exit;
+}
+
+$rating = (int)$input['rating'];
+
+// Validate rating range (typically 1-5)
+if ($rating < 1 || $rating > 5) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Rating must be between 1 and 5.'
+    ]);
+    exit;
+}
+
+$message = isset($input['message']) ? trim($input['message']) : null;
+$type = isset($input['type']) ? trim($input['type']) : null;
+
+// Try to get user info from JWT token (optional authentication)
+$user_id = null;
+$user_name = null;
+$user_email = null;
+$user_cell = null;
+$is_authenticated = false;
+
+// Check for Authorization header
+$auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
+if ($auth_header && preg_match('/Bearer\s+(.*)$/i', $auth_header, $matches)) {
+    $token = $matches[1];
+    $decoded = validateJWT($token);
+    
+    if ($decoded && isset($decoded['user_id'])) {
+        $is_authenticated = true;
+        $user_id = (int)$decoded['user_id'];
+        
+        // Fetch user details from database
+        try {
+            $stmt = $pdo->prepare("SELECT id, name, surname, email, cell FROM users WHERE id = ?");
+            $stmt->execute([$user_id]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($user) {
+                $user_name = trim($user['name'] . ' ' . ($user['surname'] ?? ''));
+                $user_email = $user['email'];
+                $user_cell = $user['cell'];
+            }
+        } catch (PDOException $e) {
+            // If user lookup fails, continue as unauthenticated
+            $is_authenticated = false;
+            $user_id = null;
+        }
+    }
+}
+
+// If not authenticated, require name and cell
+if (!$is_authenticated) {
+    if (!isset($input['name']) || empty(trim($input['name']))) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Name is required for unauthenticated users.'
+        ]);
+        exit;
+    }
+    
+    if (!isset($input['cell']) || empty(trim($input['cell']))) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Cell phone number is required for unauthenticated users.'
+        ]);
+        exit;
+    }
+    
+    $user_name = trim($input['name']);
+    $user_cell = trim($input['cell']);
+}
+
+// Validate message length if provided
+if ($message && strlen($message) > 5000) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Message must be 5000 characters or less.'
+    ]);
+    exit;
+}
+
+// Validate type length if provided
+if ($type && strlen($type) > 100) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Type must be 100 characters or less.'
+    ]);
+    exit;
+}
+
+try {
+    // Insert the feedback
+    $stmt = $pdo->prepare("
+        INSERT INTO support_feedback (user_id, name, cell, email, rating, type, message)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    
+    $result = $stmt->execute([
+        $user_id,
+        $user_name,
+        $user_cell,
+        $user_email,
+        $rating,
+        $type,
+        $message
+    ]);
+
+    if (!$result) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Server error',
+            'message' => 'Failed to submit your feedback. Please try again later.',
+            'error_details' => 'Failed to insert feedback.'
+        ]);
+        exit;
+    }
+
+    $feedback_id = $pdo->lastInsertId();
+
+    // Fetch the created feedback
+    $stmt = $pdo->prepare("
+        SELECT id, user_id, name, cell, email, rating, type, message, created_at, updated_at
+        FROM support_feedback
+        WHERE id = ?
+    ");
+    $stmt->execute([$feedback_id]);
+    $feedback = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    http_response_code(201);
+    echo json_encode([
+        'success' => true,
+        'message' => 'Thank you for your feedback!',
+        'data' => [
+            'id' => (int)$feedback['id'],
+            'rating' => (int)$feedback['rating'],
+            'type' => $feedback['type'],
+            'created_at' => $feedback['created_at']
+        ]
+    ]);
+
+} catch (PDOException $e) {
+    logException('mobile_support_feedback', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Server error',
+        'message' => 'An error occurred while submitting your feedback. Please try again later.',
+        'error_details' => 'Error submitting feedback: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('mobile_support_feedback', $e);
+    
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Server error',
+        'message' => 'An error occurred while submitting your feedback. Please try again later.',
+        'error_details' => 'Error submitting feedback: ' . $e->getMessage()
+    ]);
+}
+?>
+

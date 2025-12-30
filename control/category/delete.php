@@ -67,7 +67,7 @@ try {
     $category_id = (int)$input['id'];
     
     // Check if category exists
-    $stmt = $pdo->prepare("SELECT id, name FROM categories WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, name, img FROM categories WHERE id = ?");
     $stmt->execute([$category_id]);
     $category = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -95,6 +95,20 @@ try {
     // Note: You may want to add checks for related items/products here
     // Example: Check if any items are linked to this category
     // $stmt = $pdo->prepare("SELECT COUNT(*) FROM items WHERE category_id = ?");
+    
+    // Delete image file if it exists and is a local file
+    if (!empty($category['img'])) {
+        $img_path = $category['img'];
+        // Check if it's a local file path (not a URL)
+        if (!preg_match('/^https?:\/\//', $img_path)) {
+            // Construct full file path
+            $file_path = $_SERVER['DOCUMENT_ROOT'] . '/' . ltrim($img_path, '/');
+            // Delete file if it exists
+            if (file_exists($file_path) && is_file($file_path)) {
+                @unlink($file_path);
+            }
+        }
+    }
     
     // Delete category
     $stmt = $pdo->prepare("DELETE FROM categories WHERE id = ?");

@@ -128,12 +128,15 @@ try {
     // Generate unique slug
     $slug = generateSlug($name, $pdo);
     
+    // Prepare img field (optional)
+    $img = isset($input['img']) && !empty($input['img']) ? trim($input['img']) : null;
+    
     // Insert category
     $stmt = $pdo->prepare("
-        INSERT INTO categories (name, parent_id, slug, sort_order)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO categories (name, parent_id, slug, sort_order, img)
+        VALUES (?, ?, ?, ?, ?)
     ");
-    $stmt->execute([$name, $parent_id, $slug, $sort_order]);
+    $stmt->execute([$name, $parent_id, $slug, $sort_order, $img]);
     
     $category_id = $pdo->lastInsertId();
     
@@ -146,6 +149,7 @@ try {
             pc.name AS parent_name,
             c.slug,
             c.sort_order,
+            c.img,
             c.created_at,
             c.updated_at
         FROM categories c
