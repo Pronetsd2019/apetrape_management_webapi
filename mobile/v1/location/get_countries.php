@@ -42,10 +42,7 @@ try {
     $stmt = $pdo->query("
         SELECT 
             id,
-            name,
-            entry,
-            created_at,
-            updated_at
+            name
         FROM country
         ORDER BY name ASC
     ");

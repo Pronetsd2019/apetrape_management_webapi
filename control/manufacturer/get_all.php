@@ -59,6 +59,7 @@ try {
         SELECT 
             m.id AS manufacturer_id,
             m.name AS manufacturer_name,
+            m.img AS img,
             m.created_at,
             m.updated_at,
             COUNT(DISTINCT vm.id) AS total_models,
@@ -66,7 +67,7 @@ try {
         FROM manufacturers m
         LEFT JOIN vehicle_models vm ON vm.manufacturer_id = m.id
         LEFT JOIN item_vehicle_models ivm ON ivm.vehicle_model_id = vm.id
-        GROUP BY m.id, m.name, m.created_at, m.updated_at
+        GROUP BY m.id, m.name, m.img, m.created_at, m.updated_at
         ORDER BY m.name ASC
     ");
 

@@ -48,10 +48,30 @@ require_once __DIR__ . '/../util/error_logger.php';
  }
 
 
-// Only allow PUT method
-if ($_SERVER['REQUEST_METHOD'] !== 'PUT') {
+// Allow PUT method or POST (for multipart/form-data file uploads)
+// PHP $_FILES only works with POST, so we allow POST for file uploads
+$isPutRequest = false;
+$isPostWithFiles = false;
+
+if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
+    $isPutRequest = true;
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Allow POST if it's multipart/form-data (indicated by $_FILES or Content-Type)
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (strpos($contentType, 'multipart/form-data') !== false || !empty($_FILES)) {
+        $isPostWithFiles = true;
+    } else {
+        // Check for RESTful method override for non-file POST requests
+        $methodOverride = $_POST['_method'] ?? $_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'] ?? null;
+        if (strtoupper($methodOverride) === 'PUT') {
+            $isPutRequest = true;
+        }
+    }
+}
+
+if (!$isPutRequest && !$isPostWithFiles) {
     http_response_code(405);
-    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use PUT.']);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use PUT for JSON or POST for multipart/form-data.']);
     exit;
 }
 
@@ -84,18 +104,36 @@ function generateSlug($name, $pdo, $excludeId = null) {
 }
 
 try {
-    $input = json_decode(file_get_contents('php://input'), true);
+    // Get input data - check Content-Type to determine if JSON or form data
+    $input = [];
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (strpos($contentType, 'application/json') !== false) {
+        // Parse JSON input
+        $jsonInput = file_get_contents('php://input');
+        if (!empty($jsonInput)) {
+            $input = json_decode($jsonInput, true);
+            if ($input === null) {
+                $input = [];
+            }
+        }
+    }
+    
+    // Get category_id from JSON or form data
+    $category_id = null;
+    if (isset($input['id']) && $input['id'] !== '' && $input['id'] !== null) {
+        $category_id = (int)$input['id'];
+    } elseif (isset($_POST['id']) && $_POST['id'] !== '' && $_POST['id'] !== null) {
+        $category_id = (int)$_POST['id'];
+    }
     
     // Validate required fields
-    if (!isset($input['id']) || empty($input['id'])) {
+    if (!$category_id || $category_id <= 0) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'Field "id" is required.']);
         exit;
     }
     
-    $category_id = (int)$input['id'];
-    
-    // Check if category exists
+    // Check if category exists and get current data (including old img path)
     $stmt = $pdo->prepare("SELECT id, name, parent_id, img FROM categories WHERE id = ?");
     $stmt->execute([$category_id]);
     $current = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -108,13 +146,28 @@ try {
     
     $update_fields = [];
     $params = [];
-    $old_img_path = $current['img'];
+    $old_img_path = $current['img'] ?? null;
     
-    if (isset($input['name']) && trim($input['name']) !== '') {
+    // Get name from JSON or form data
+    $name = null;
+    if (isset($input['name']) && !empty(trim($input['name']))) {
         $name = trim($input['name']);
-        
+    } elseif (isset($_POST['name']) && !empty(trim($_POST['name']))) {
+        $name = trim($_POST['name']);
+    }
+    
+    if ($name) {
         // Check for duplicate name under same parent
-        $parent_id = $input['parent_id'] ?? $current['parent_id'];
+        // Get parent_id from input or current value
+        $parent_id = null;
+        if (isset($input['parent_id'])) {
+            $parent_id = $input['parent_id'] !== '' && $input['parent_id'] !== null ? (int)$input['parent_id'] : null;
+        } elseif (isset($_POST['parent_id'])) {
+            $parent_id = $_POST['parent_id'] !== '' && $_POST['parent_id'] !== null ? (int)$_POST['parent_id'] : null;
+        } else {
+            $parent_id = $current['parent_id'];
+        }
+        
         $stmt = $pdo->prepare("SELECT id FROM categories WHERE name = ? AND id != ? AND " . 
                               ($parent_id !== null ? "parent_id = ?" : "parent_id IS NULL"));
         if ($parent_id !== null) {
@@ -138,8 +191,14 @@ try {
         $params[] = $slug;
     }
     
-    if (isset($input['parent_id'])) {
-        $parent_id = $input['parent_id'] !== '' && $input['parent_id'] !== null ? (int)$input['parent_id'] : null;
+    // Get parent_id from JSON or form data
+    if (isset($input['parent_id']) || isset($_POST['parent_id'])) {
+        $parent_id = null;
+        if (isset($input['parent_id'])) {
+            $parent_id = $input['parent_id'] !== '' && $input['parent_id'] !== null ? (int)$input['parent_id'] : null;
+        } elseif (isset($_POST['parent_id'])) {
+            $parent_id = $_POST['parent_id'] !== '' && $_POST['parent_id'] !== null ? (int)$_POST['parent_id'] : null;
+        }
         
         // Prevent setting self as parent
         if ($parent_id === $category_id) {
@@ -178,26 +237,121 @@ try {
         $params[] = $parent_id;
     }
     
-    if (isset($input['sort_order'])) {
-        $update_fields[] = "sort_order = ?";
-        $params[] = (int)$input['sort_order'];
+    // Get sort_order from JSON or form data
+    if (isset($input['sort_order']) || isset($_POST['sort_order'])) {
+        $sort_order = null;
+        if (isset($input['sort_order'])) {
+            $sort_order = (int)$input['sort_order'];
+        } elseif (isset($_POST['sort_order'])) {
+            $sort_order = (int)$_POST['sort_order'];
+        }
+        
+        if ($sort_order !== null) {
+            $update_fields[] = "sort_order = ?";
+            $params[] = $sort_order;
+        }
     }
     
-    if (isset($input['img'])) {
-        // Allow empty string to clear the image
-        $new_img = $input['img'] === '' ? null : trim($input['img']);
+    // Handle image update
+    $new_img = null;
+    $should_update_img = false;
+    
+    // Check for file upload first (multipart form-data)
+    if (isset($_FILES['img']) && $_FILES['img']['error'] !== UPLOAD_ERR_NO_FILE) {
+        $file = $_FILES['img'];
+        $error = $file['error'];
         
-        // If updating img and old img exists and is a local file, delete it
-        if ($old_img_path && $new_img !== $old_img_path) {
-            // Check if old image is a local file path (not a URL)
-            if (!preg_match('/^https?:\/\//', $old_img_path)) {
-                $old_file_path = $_SERVER['DOCUMENT_ROOT'] . '/' . ltrim($old_img_path, '/');
-                if (file_exists($old_file_path) && is_file($old_file_path)) {
-                    @unlink($old_file_path);
-                }
+        if ($error !== UPLOAD_ERR_OK) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File upload error: ' . $error]);
+            exit;
+        }
+        
+        // Validate file type
+        $allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+        
+        if (!in_array($mimeType, $allowedTypes)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Invalid file type. Allowed types: jpg, jpeg, png, gif, webp']);
+            exit;
+        }
+        
+        // Validate file size (max 5MB)
+        $maxSize = 5 * 1024 * 1024; // 5MB
+        if ($file['size'] > $maxSize) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File size exceeds maximum allowed size of 5MB']);
+            exit;
+        }
+        
+        // Security check
+        if (!is_uploaded_file($file['tmp_name'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Potential file upload attack detected.']);
+            exit;
+        }
+        
+        // Delete old image file if it exists and is a local file
+        if ($old_img_path && !filter_var($old_img_path, FILTER_VALIDATE_URL) && strpos($old_img_path, 'uploads/') === 0) {
+            $old_file_path = dirname(__DIR__) . '/' . $old_img_path;
+            if (file_exists($old_file_path)) {
+                @unlink($old_file_path); // Suppress errors for unlinking
             }
         }
         
+        // Create upload directory if it doesn't exist
+        $uploadDir = dirname(__DIR__) . '/uploads/category';
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+            throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
+        }
+        
+        // Generate unique filename
+        $originalName = basename($file['name'] ?? '');
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        $safeName = 'category_' . $category_id . '_' . uniqid('', true) . ($extension ? '.' . $extension : '');
+        $targetPath = $uploadDir . '/' . $safeName;
+        
+        // Move uploaded file
+        if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+            throw new RuntimeException('Failed to move uploaded image to destination.');
+        }
+        
+        // Store relative path
+        $new_img = 'uploads/category/' . $safeName;
+        $should_update_img = true;
+    } 
+    // Check for JSON input (backward compatibility)
+    elseif (isset($input['img'])) {
+        // Allow empty string to clear the image
+        if ($input['img'] === '') {
+            // Delete old image file if it exists and is a local file
+            if ($old_img_path && !filter_var($old_img_path, FILTER_VALIDATE_URL) && strpos($old_img_path, 'uploads/') === 0) {
+                $old_file_path = dirname(__DIR__) . '/' . $old_img_path;
+                if (file_exists($old_file_path)) {
+                    @unlink($old_file_path); // Suppress errors for unlinking
+                }
+            }
+            $new_img = null;
+        } else {
+            $new_img = trim($input['img']);
+            // If updating img and old img exists and is a local file, delete it
+            if ($old_img_path && $new_img !== $old_img_path) {
+                // Check if old image is a local file path (not a URL)
+                if (!filter_var($old_img_path, FILTER_VALIDATE_URL) && strpos($old_img_path, 'uploads/') === 0) {
+                    $old_file_path = dirname(__DIR__) . '/' . $old_img_path;
+                    if (file_exists($old_file_path)) {
+                        @unlink($old_file_path);
+                    }
+                }
+            }
+        }
+        $should_update_img = true;
+    }
+    
+    if ($should_update_img) {
         $update_fields[] = "img = ?";
         $params[] = $new_img;
     }

@@ -70,15 +70,27 @@ if (!$manufacturer_id) {
 }
 
 try {
-    // Check if manufacturer exists
-    $stmt = $pdo->prepare("SELECT id, name FROM manufacturers WHERE id = ?");
+    // Check if manufacturer exists and get its image path
+    $stmt = $pdo->prepare("SELECT id, name, img FROM manufacturers WHERE id = ?");
     $stmt->execute([$manufacturer_id]);
-    $manufacturer = $stmt->fetch();
+    $manufacturer = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$manufacturer) {
         http_response_code(404);
         echo json_encode(['success' => false, 'message' => 'Manufacturer not found.']);
         exit;
+    }
+
+    // Delete associated image file if it exists and is a local file
+    if (isset($manufacturer['img']) && !empty($manufacturer['img'])) {
+        $img_path = $manufacturer['img'];
+        // Check if it's a local file (not a URL)
+        if (!filter_var($img_path, FILTER_VALIDATE_URL) && strpos($img_path, 'uploads/') === 0) {
+            $file_path = dirname(__DIR__) . '/' . $img_path;
+            if (file_exists($file_path)) {
+                @unlink($file_path); // Suppress errors for unlinking
+            }
+        }
     }
 
     // Delete manufacturer (CASCADE will handle vehicle_models)

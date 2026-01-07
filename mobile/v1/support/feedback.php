@@ -42,28 +42,31 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
 
-// Validate required fields
-if (!isset($input['rating']) || !is_numeric($input['rating'])) {
-    http_response_code(400);
-    echo json_encode([
-        'success' => false,
-        'error' => 'Validation failed',
-        'message' => 'Rating is required and must be a number.'
-    ]);
-    exit;
-}
-
-$rating = (int)$input['rating'];
-
-// Validate rating range (typically 1-5)
-if ($rating < 1 || $rating > 5) {
-    http_response_code(400);
-    echo json_encode([
-        'success' => false,
-        'error' => 'Validation failed',
-        'message' => 'Rating must be between 1 and 5.'
-    ]);
-    exit;
+// Validate rating if provided (optional field)
+$rating = null;
+if (isset($input['rating'])) {
+    if (!is_numeric($input['rating'])) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Rating must be a number.'
+        ]);
+        exit;
+    }
+    
+    $rating = (int)$input['rating'];
+    
+    // Validate rating range (typically 1-5)
+    if ($rating < 1 || $rating > 5) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Rating must be between 1 and 5.'
+        ]);
+        exit;
+    }
 }
 
 $message = isset($input['message']) ? trim($input['message']) : null;
@@ -75,33 +78,116 @@ $user_name = null;
 $user_email = null;
 $user_cell = null;
 $is_authenticated = false;
+$auth_debug = []; // Initialize debug array for authentication troubleshooting
 
-// Check for Authorization header
-$auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
+// Extract Authorization header (same logic as auth_middleware.php)
+$auth_header = null;
+
+if (function_exists('getallheaders')) {
+    $headers = getallheaders();
+    $auth_debug['getallheaders_exists'] = true;
+    $auth_debug['headers_keys'] = array_keys($headers ?? []);
+    if (isset($headers['Authorization'])) {
+        $auth_header = trim($headers['Authorization']);
+        $auth_debug['header_source'] = 'getallheaders_Authorization';
+    } elseif (isset($headers['authorization'])) {
+        $auth_header = trim($headers['authorization']);
+        $auth_debug['header_source'] = 'getallheaders_authorization';
+    }
+} else {
+    $auth_debug['getallheaders_exists'] = false;
+}
+
+// Fallbacks for different server environments
+if (!$auth_header && isset($_SERVER['Authorization'])) {
+    $auth_header = trim($_SERVER['Authorization']);
+    $auth_debug['header_source'] = 'SERVER_Authorization';
+}
+if (!$auth_header && isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $auth_header = trim($_SERVER['HTTP_AUTHORIZATION']);
+    $auth_debug['header_source'] = 'SERVER_HTTP_AUTHORIZATION';
+}
+
+$auth_debug['auth_header_found'] = !empty($auth_header);
+$auth_debug['auth_header_length'] = $auth_header ? strlen($auth_header) : 0;
+
+// Check for Authorization header and validate token
 if ($auth_header && preg_match('/Bearer\s+(.*)$/i', $auth_header, $matches)) {
-    $token = $matches[1];
-    $decoded = validateJWT($token);
+    $token = trim($matches[1]);
+    $auth_debug['token_extracted'] = true;
+    $auth_debug['token_length'] = strlen($token);
+    $auth_debug['token_preview'] = substr($token, 0, 20) . '...';
     
-    if ($decoded && isset($decoded['user_id'])) {
-        $is_authenticated = true;
-        $user_id = (int)$decoded['user_id'];
+    if (!empty($token)) {
+        $decoded = validateJWT($token);
+        $auth_debug['jwt_validation_result'] = $decoded !== false ? 'success' : 'failed';
         
-        // Fetch user details from database
-        try {
-            $stmt = $pdo->prepare("SELECT id, name, surname, email, cell FROM users WHERE id = ?");
-            $stmt->execute([$user_id]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        // Check for user_id or sub (JWT standard claim)
+        if ($decoded !== false && is_array($decoded)) {
+            $auth_debug['decoded_payload'] = array_keys($decoded);
+            $user_id_from_token = null;
             
-            if ($user) {
-                $user_name = trim($user['name'] . ' ' . ($user['surname'] ?? ''));
-                $user_email = $user['email'];
-                $user_cell = $user['cell'];
+            if (isset($decoded['user_id'])) {
+                $user_id_from_token = (int)$decoded['user_id'];
+                $auth_debug['user_id_source'] = 'user_id';
+                $auth_debug['user_id_value'] = $user_id_from_token;
+            } elseif (isset($decoded['sub'])) {
+                $user_id_from_token = (int)$decoded['sub'];
+                $auth_debug['user_id_source'] = 'sub';
+                $auth_debug['user_id_value'] = $user_id_from_token;
+            } else {
+                $auth_debug['user_id_source'] = 'none';
+                $auth_debug['decoded_keys'] = array_keys($decoded);
             }
-        } catch (PDOException $e) {
-            // If user lookup fails, continue as unauthenticated
-            $is_authenticated = false;
-            $user_id = null;
+            
+            if ($user_id_from_token) {
+                $is_authenticated = true;
+                $user_id = $user_id_from_token;
+                
+                // Fetch user details from database
+                try {
+                    $stmt = $pdo->prepare("SELECT id, name, surname, email, cell FROM users WHERE id = ?");
+                    $stmt->execute([$user_id]);
+                    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if ($user) {
+                        $user_name = trim($user['name'] . ' ' . ($user['surname'] ?? ''));
+                        $user_email = $user['email'];
+                        $user_cell = $user['cell'];
+                        $auth_debug['user_found_in_db'] = true;
+                        $auth_debug['authentication_status'] = 'success';
+                    } else {
+                        // User not found in database, continue as unauthenticated
+                        $is_authenticated = false;
+                        $user_id = null;
+                        $auth_debug['user_found_in_db'] = false;
+                        $auth_debug['authentication_status'] = 'failed_user_not_found';
+                        $auth_debug['user_id_searched'] = $user_id_from_token;
+                    }
+                } catch (PDOException $e) {
+                    // If user lookup fails, continue as unauthenticated
+                    $is_authenticated = false;
+                    $user_id = null;
+                    $auth_debug['authentication_status'] = 'failed_db_error';
+                    $auth_debug['db_error'] = $e->getMessage();
+                }
+            } else {
+                $auth_debug['authentication_status'] = 'failed_no_user_id';
+                $auth_debug['decoded_payload_keys'] = array_keys($decoded ?? []);
+            }
+        } else {
+            $auth_debug['authentication_status'] = 'failed_invalid_token';
+            $auth_debug['decoded_type'] = gettype($decoded);
+            $auth_debug['decoded_value'] = $decoded;
         }
+    } else {
+        $auth_debug['authentication_status'] = 'failed_empty_token';
+    }
+} else {
+    $auth_debug['authentication_status'] = 'failed_no_header_or_invalid_format';
+    if ($auth_header) {
+        $auth_debug['header_format_valid'] = false;
+        $auth_debug['header_preview'] = substr($auth_header, 0, 50);
     }
 }
 
@@ -112,8 +198,9 @@ if (!$is_authenticated) {
         echo json_encode([
             'success' => false,
             'error' => 'Validation failed',
-            'message' => 'Name is required for unauthenticated users.'
-        ]);
+            'message' => 'Name is required for unauthenticated users.',
+            'auth_debug' => $auth_debug
+        ], JSON_PRETTY_PRINT);
         exit;
     }
     
@@ -122,8 +209,9 @@ if (!$is_authenticated) {
         echo json_encode([
             'success' => false,
             'error' => 'Validation failed',
-            'message' => 'Cell phone number is required for unauthenticated users.'
-        ]);
+            'message' => 'Cell phone number is required for unauthenticated users.',
+            'auth_debug' => $auth_debug
+        ], JSON_PRETTY_PRINT);
         exit;
     }
     
@@ -198,7 +286,7 @@ try {
         'message' => 'Thank you for your feedback!',
         'data' => [
             'id' => (int)$feedback['id'],
-            'rating' => (int)$feedback['rating'],
+            'rating' => $feedback['rating'] ? (int)$feedback['rating'] : null,
             'type' => $feedback['type'],
             'created_at' => $feedback['created_at']
         ]

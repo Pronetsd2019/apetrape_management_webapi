@@ -1,5 +1,8 @@
 <?php
 
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 // CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
 $isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
@@ -26,9 +29,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Handles both login and registration for social providers (Facebook, Google, Instagram)
  */
 
-require_once __DIR__ . '/../../control/util/connect.php';
-require_once __DIR__ . '/../../control/util/jwt.php';
-require_once __DIR__ . '/../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/connect.php';
+require_once __DIR__ . '/../../../control/util/jwt.php';
+require_once __DIR__ . '/../../../control/util/error_logger.php';
 
 header('Content-Type: application/json');
 
@@ -48,7 +51,8 @@ if (!isset($input['provider']) || !isset($input['provider_user_id'])) {
     echo json_encode([
         'success' => false,
         'error' => 'Invalid request',
-        'message' => 'Provider and provider_user_id are required.'
+        'message' => 'Provider and provider_user_id are required.',
+        'input' => $input
     ]);
     exit;
 }
@@ -115,57 +119,82 @@ try {
     $isNewUser = false;
 
     if (!$user) {
-        // User doesn't exist, create new account
-        $isNewUser = true;
+        // User not found by provider_user_id and provider
+        // Check if user exists by email (if email is provided)
+        if ($email) {
+            $stmt = $pdo->prepare("
+                SELECT id, name, surname, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
+                FROM users
+                WHERE LOWER(email) = LOWER(?)
+            ");
+            $stmt->execute([$email]);
+            $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        // Validate required fields for new user
-        if (!$name) {
-            http_response_code(400);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Validation failed',
-                'message' => 'Name is required for new user registration.'
-            ]);
-            exit;
+            if ($existingUser) {
+                // User exists with this email
+                if ($existingUser['provider'] && $existingUser['provider_user_id']) {
+                    // User is already a social login user (maybe different provider)
+                    // Log them in and optionally update provider info if needed
+                    $user = $existingUser;
+                    
+                    // Update provider info if it's different (user switching providers)
+                    if ($existingUser['provider'] !== $provider || $existingUser['provider_user_id'] !== $provider_user_id) {
+                        $stmt = $pdo->prepare("
+                            UPDATE users 
+                            SET provider = ?, provider_user_id = ?, updated_at = NOW() 
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$provider, $provider_user_id, $existingUser['id']]);
+                        $user['provider'] = $provider;
+                        $user['provider_user_id'] = $provider_user_id;
+                    }
+                } else {
+                    // User exists but is NOT a social login user (email/password user)
+                    // Tell them to use email/password login
+                    http_response_code(400);
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'Account exists',
+                        'message' => 'An account with this email already exists. Please use email and password to login.'
+                    ]);
+                    exit;
+                }
+            }
         }
 
-        // Check if email already exists (if provided)
-        if ($email) {
-            $stmt = $pdo->prepare("SELECT id FROM users WHERE LOWER(email) = LOWER(?)");
-            $stmt->execute([$email]);
-            $existingEmail = $stmt->fetch(PDO::FETCH_ASSOC);
+        // If user still not found, create new account
+        if (!$user) {
+            $isNewUser = true;
 
-            if ($existingEmail) {
+            // Validate required fields for new user
+            if (!$name) {
                 http_response_code(400);
                 echo json_encode([
                     'success' => false,
                     'error' => 'Validation failed',
-                    'message' => 'An account with this email already exists.',
-                    'details' => [
-                        'email' => ['The email has already been taken.']
-                    ]
+                    'message' => 'Name is required for new user registration.'
                 ]);
                 exit;
             }
+
+            // Insert new user (surname is NULL for social login users)
+            $stmt = $pdo->prepare("
+                INSERT INTO users (name, surname, email, cell, provider, provider_user_id, avatar, status)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, 1)
+            ");
+            $stmt->execute([$name, $email, null, $provider, $provider_user_id, $avatar]);
+
+            $userId = $pdo->lastInsertId();
+
+            // Fetch the created user
+            $stmt = $pdo->prepare("
+                SELECT id, name, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
+                FROM users
+                WHERE id = ?
+            ");
+            $stmt->execute([$userId]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
         }
-
-        // Insert new user (surname is NULL for social login users)
-        $stmt = $pdo->prepare("
-            INSERT INTO users (name, surname, email, cell, provider, provider_user_id, avatar, status)
-            VALUES (?, NULL, ?, ?, ?, ?, ?, 1)
-        ");
-        $stmt->execute([$name, $email, null, $provider, $provider_user_id, $avatar]);
-
-        $userId = $pdo->lastInsertId();
-
-        // Fetch the created user
-        $stmt = $pdo->prepare("
-            SELECT id, name, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
-            FROM users
-            WHERE id = ?
-        ");
-        $stmt->execute([$userId]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
     } else {
         // User exists, update last login info (optional: update avatar/name if changed)
         if ($avatar && $avatar !== $user['avatar']) {

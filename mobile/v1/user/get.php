@@ -21,13 +21,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 /**
- * Mobile Get Cities by Region Endpoint
- * GET /mobile/v1/location/get_cities.php?region_id=1
- * Public endpoint - no authentication required
+ * Mobile User Get Profile Endpoint
+ * GET /mobile/v1/user/get.php
+ * Requires JWT authentication - returns the authenticated user's profile
  */
 
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../util/auth_middleware.php';
+
+// Ensure the request is authenticated
+requireMobileJwtAuth();
 
 header('Content-Type: application/json');
 
@@ -38,88 +42,82 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-$region_id = $_GET['region_id'] ?? null;
+// Get the authenticated user's ID from the JWT payload
+$authUser = $GLOBALS['auth_user'] ?? null;
+$user_id = (int)($authUser['user_id'] ?? null);
 
-if (!$region_id || !is_numeric($region_id)) {
-    http_response_code(400);
+if (!$user_id) {
+    http_response_code(401);
     echo json_encode([
         'success' => false,
-        'error' => 'Validation failed',
-        'message' => 'Valid region_id parameter is required.'
+        'error' => 'Unauthorized',
+        'message' => 'Unable to identify authenticated user.'
     ]);
     exit;
 }
 
 try {
-    // Validate region exists and fetch country info
+    // Fetch user profile
     $stmt = $pdo->prepare("
         SELECT 
-            r.id AS region_id,
-            r.name AS region_name,
-            r.country_id,
-            c.name AS country_name
-        FROM region r
-        LEFT JOIN country c ON r.country_id = c.id
-        WHERE r.id = ?
+            CONCAT_WS(' ', `name`, `surname`) AS user_names,
+            `email`,
+            `cell`,
+            `created_at`,
+            `provider`,
+            `avatar`,
+            `status`
+        FROM `users`
+        WHERE `id` = ?
     ");
-    $stmt->execute([$region_id]);
-    $region = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$region) {
+    if (!$user) {
         http_response_code(404);
         echo json_encode([
             'success' => false,
             'error' => 'Not found',
-            'message' => 'Region not found.'
+            'message' => 'User profile not found.'
         ]);
         exit;
     }
 
-    // Get cities for this region
-    $stmt = $pdo->prepare("
-        SELECT 
-            id,
-            name,
-            region_id
-        FROM city
-        WHERE region_id = ?
-        ORDER BY name ASC
-    ");
-    $stmt->execute([$region_id]);
-
-    $cities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    // Format response
     http_response_code(200);
     echo json_encode([
         'success' => true,
-        'message' => 'Cities fetched successfully.',
-        'region' => [
-            'id' => (int)$region['region_id'],
-            'name' => $region['region_name'],
-            'country_id' => (int)$region['country_id'],
-            'country_name' => $region['country_name']
-        ],
-        'data' => $cities,
-        'count' => count($cities)
+        'message' => 'User profile retrieved successfully.',
+        'data' => [
+            'name' => $user['user_names'],
+            'email' => $user['email'],
+            'cell' => $user['cell'],
+            'created_at' => $user['created_at'],
+            'provider' => $user['provider'],
+            'avatar' => $user['avatar'],
+            'status' => (int)$user['status']
+        ]
     ]);
 
 } catch (PDOException $e) {
-    logException('mobile_location_get_cities', $e);
+    logException('mobile_user_get', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'error' => 'Server error',
-        'message' => 'An error occurred while fetching cities. Please try again later.',
-        'error_details' => 'Error fetching cities: ' . $e->getMessage()
+        'message' => 'An error occurred while retrieving your profile. Please try again later.',
+        'error_details' => 'Error retrieving user profile: ' . $e->getMessage()
     ]);
 } catch (Exception $e) {
-    logException('mobile_location_get_cities', $e);
+    logException('mobile_user_get', $e);
+    
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'error' => 'Server error',
-        'message' => 'An error occurred while fetching cities. Please try again later.',
-        'error_details' => 'Error fetching cities: ' . $e->getMessage()
+        'message' => 'An error occurred while retrieving your profile. Please try again later.',
+        'error_details' => 'Error retrieving user profile: ' . $e->getMessage()
     ]);
 }
 ?>

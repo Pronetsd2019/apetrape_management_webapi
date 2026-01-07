@@ -99,13 +99,11 @@ try {
     // Delete image file if it exists and is a local file
     if (!empty($category['img'])) {
         $img_path = $category['img'];
-        // Check if it's a local file path (not a URL)
-        if (!preg_match('/^https?:\/\//', $img_path)) {
-            // Construct full file path
-            $file_path = $_SERVER['DOCUMENT_ROOT'] . '/' . ltrim($img_path, '/');
-            // Delete file if it exists
-            if (file_exists($file_path) && is_file($file_path)) {
-                @unlink($file_path);
+        // Check if it's a local file (not a URL)
+        if (!filter_var($img_path, FILTER_VALIDATE_URL) && strpos($img_path, 'uploads/') === 0) {
+            $file_path = dirname(__DIR__) . '/' . $img_path;
+            if (file_exists($file_path)) {
+                @unlink($file_path); // Suppress errors for unlinking
             }
         }
     }

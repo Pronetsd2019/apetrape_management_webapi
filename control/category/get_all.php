@@ -64,6 +64,7 @@ try {
             pc.name AS parent_name,
             c.slug,
             c.sort_order,
+            c.img,
             c.created_at,
             c.updated_at,
             (SELECT COUNT(*) FROM categories WHERE parent_id = c.id) AS children_count

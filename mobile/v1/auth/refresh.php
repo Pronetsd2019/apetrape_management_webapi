@@ -25,9 +25,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * POST /mobile/auth/refresh.php
  */
 
-require_once __DIR__ . '/../../control/util/connect.php';
-require_once __DIR__ . '/../../control/util/jwt.php';
-require_once __DIR__ . '/../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/connect.php';
+require_once __DIR__ . '/../../../control/util/jwt.php';
+require_once __DIR__ . '/../../../control/util/error_logger.php';
 
 header('Content-Type: application/json');
 

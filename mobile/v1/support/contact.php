@@ -73,31 +73,68 @@ $user_email = null;
 $user_cell = null;
 $is_authenticated = false;
 
-// Check for Authorization header
-$auth_header = $_SERVER['HTTP_AUTHORIZATION'] ?? null;
+// Extract Authorization header (same logic as auth_middleware.php)
+$auth_header = null;
+if (function_exists('getallheaders')) {
+    $headers = getallheaders();
+    if (isset($headers['Authorization'])) {
+        $auth_header = trim($headers['Authorization']);
+    } elseif (isset($headers['authorization'])) {
+        $auth_header = trim($headers['authorization']);
+    }
+}
+
+// Fallbacks for different server environments
+if (!$auth_header && isset($_SERVER['Authorization'])) {
+    $auth_header = trim($_SERVER['Authorization']);
+}
+if (!$auth_header && isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $auth_header = trim($_SERVER['HTTP_AUTHORIZATION']);
+}
+
+// Check for Authorization header and validate token
 if ($auth_header && preg_match('/Bearer\s+(.*)$/i', $auth_header, $matches)) {
-    $token = $matches[1];
-    $decoded = validateJWT($token);
+    $token = trim($matches[1]);
     
-    if ($decoded && isset($decoded['user_id'])) {
-        $is_authenticated = true;
-        $user_id = (int)$decoded['user_id'];
+    if (!empty($token)) {
+        $decoded = validateJWT($token);
         
-        // Fetch user details from database
-        try {
-            $stmt = $pdo->prepare("SELECT id, name, surname, email, cell FROM users WHERE id = ?");
-            $stmt->execute([$user_id]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        // Check for user_id or sub (JWT standard claim)
+        if ($decoded !== false && is_array($decoded)) {
+            $user_id_from_token = null;
             
-            if ($user) {
-                $user_name = trim($user['name'] . ' ' . ($user['surname'] ?? ''));
-                $user_email = $user['email'];
-                $user_cell = $user['cell'];
+            if (isset($decoded['user_id'])) {
+                $user_id_from_token = (int)$decoded['user_id'];
+            } elseif (isset($decoded['sub'])) {
+                $user_id_from_token = (int)$decoded['sub'];
             }
-        } catch (PDOException $e) {
-            // If user lookup fails, continue as unauthenticated
-            $is_authenticated = false;
-            $user_id = null;
+            
+            if ($user_id_from_token) {
+                $is_authenticated = true;
+                $user_id = $user_id_from_token;
+                
+                // Fetch user details from database
+                try {
+                    $stmt = $pdo->prepare("SELECT id, name, surname, email, cell FROM users WHERE id = ?");
+                    $stmt->execute([$user_id]);
+                    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if ($user) {
+                        $user_name = trim($user['name'] . ' ' . ($user['surname'] ?? ''));
+                        $user_email = $user['email'];
+                        $user_cell = $user['cell'];
+                    } else {
+                        // User not found in database, continue as unauthenticated
+                        $is_authenticated = false;
+                        $user_id = null;
+                    }
+                } catch (PDOException $e) {
+                    // If user lookup fails, continue as unauthenticated
+                    logException('mobile_support_contact_auth', $e);
+                    $is_authenticated = false;
+                    $user_id = null;
+                }
+            }
         }
     }
 }

@@ -60,7 +60,7 @@ if (!$user_id) {
 $input = json_decode(file_get_contents('php://input'), true);
 
 // Validate required fields
-$required_fields = ['name', 'email', 'cell'];
+$required_fields = ['name', 'email', 'phone'];
 foreach ($required_fields as $field) {
     if (!isset($input[$field]) || empty(trim($input[$field]))) {
         http_response_code(400);
@@ -75,7 +75,7 @@ foreach ($required_fields as $field) {
 
 $name = trim($input['name']);
 $email = trim($input['email']);
-$cell = trim($input['cell']);
+$cell = trim($input['phone']);
 
 // Validate name length
 if (strlen($name) < 2) {
@@ -155,7 +155,7 @@ try {
     }
 
     // Check for cell conflicts (excluding current user)
-    if ($cell !== $user['cell']) {
+    if ($cell !== $user['phone']) {
         $checkCellStmt = $pdo->prepare("SELECT id FROM users WHERE cell = ? AND id != ?");
         $checkCellStmt->execute([$cell, $user_id]);
         $cellConflict = $checkCellStmt->fetch(PDO::FETCH_ASSOC);

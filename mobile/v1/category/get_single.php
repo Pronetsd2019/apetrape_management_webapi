@@ -1,9 +1,13 @@
 <?php
 
-// CORS headers for subdomain support
+// CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
+$isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://localhost') === 0 ||
+    strpos($_SERVER['HTTP_ORIGIN'], 'http://127.0.0.1') === 0
+);
 
-if (isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) {
+if ((isset($_SERVER['HTTP_ORIGIN']) && preg_match($allowedOriginPattern, $_SERVER['HTTP_ORIGIN'])) || $isLocalhostOrigin) {
     header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
     header("Access-Control-Allow-Credentials: true");
     header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -15,39 +19,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
+
 /**
- * Get Single Category with Children Endpoint
- * GET /category/get_single.php?id=1
- * GET /category/get_single.php?slug=electronics
+ * Mobile Get Single Category with Children Endpoint
+ * GET /mobile/v1/category/get_single.php?id=1
+ * GET /mobile/v1/category/get_single.php?slug=electronics
+ * Public endpoint - no authentication required
  */
 
- require_once __DIR__ . '/../util/connect.php';
-require_once __DIR__ . '/../util/error_logger.php';
- require_once __DIR__ . '/../middleware/auth_middleware.php';
- require_once __DIR__ . '/../util/check_permission.php';
- 
- // Ensure the request is authenticated
- requireJwtAuth();
- 
- header('Content-Type: application/json');
- 
- // Get the authenticated user's ID from the JWT payload
- $authUser = $GLOBALS['auth_user'] ?? null;
- $userId = $authUser['admin_id'] ?? null;
- 
- if (!$userId) {
-     http_response_code(401);
-     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
-     exit;
- }
- 
- // Check if the user has permission to create a country
- if (!checkUserPermission($userId, 'categories', 'read')) {
-     http_response_code(403);
-     echo json_encode(['success' => false, 'message' => 'You do not have permission to read category.']);
-     exit;
- }
+require_once __DIR__ . '/../../../control/util/connect.php';
+require_once __DIR__ . '/../../../control/util/error_logger.php';
 
+header('Content-Type: application/json');
 
 // Only allow GET method
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
@@ -94,6 +77,7 @@ try {
                 pc.name AS parent_name,
                 pc.slug AS parent_slug,
                 c.slug,
+                c.img,
                 c.sort_order,
                 c.created_at,
                 c.updated_at
@@ -119,6 +103,7 @@ try {
             name,
             parent_id,
             slug,
+            img,
             sort_order,
             created_at,
             updated_at,
@@ -129,6 +114,22 @@ try {
     ");
     $stmt->execute([$category['id']]);
     $children = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Format children
+    $formatted_children = [];
+    foreach ($children as $child) {
+        $formatted_children[] = [
+            'id' => (int)$child['id'],
+            'name' => $child['name'],
+            'parent_id' => (int)$child['parent_id'],
+            'slug' => $child['slug'],
+            'img' => $child['img'] ? $child['img'] : null,
+            'sort_order' => (int)$child['sort_order'],
+            'children_count' => (int)$child['children_count'],
+            'created_at' => $child['created_at'],
+            'updated_at' => $child['updated_at']
+        ];
+    }
     
     // Fetch breadcrumb path
     $breadcrumb = [];
@@ -151,22 +152,46 @@ try {
         }
     }
     
-    $category['children'] = $children;
-    $category['breadcrumb'] = $breadcrumb;
+    // Format category response
+    $formatted_category = [
+        'id' => (int)$category['id'],
+        'name' => $category['name'],
+        'parent_id' => $category['parent_id'] ? (int)$category['parent_id'] : null,
+        'parent_name' => $category['parent_name'] ? $category['parent_name'] : null,
+        'parent_slug' => $category['parent_slug'] ? $category['parent_slug'] : null,
+        'slug' => $category['slug'],
+        'img' => $category['img'] ? $category['img'] : null,
+        'sort_order' => (int)$category['sort_order'],
+        'children' => $formatted_children,
+        'breadcrumb' => $breadcrumb,
+        'created_at' => $category['created_at'],
+        'updated_at' => $category['updated_at']
+    ];
     
     http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Category fetched successfully.',
-        'data' => $category
+        'data' => $formatted_category
     ]);
 
 } catch (PDOException $e) {
-    logException('category_get_single', $e);
+    logException('mobile_category_get_single', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Error fetching category: ' . $e->getMessage()
+        'error' => 'Server error',
+        'message' => 'An error occurred while fetching category. Please try again later.',
+        'error_details' => 'Error fetching category: ' . $e->getMessage()
+    ]);
+} catch (Exception $e) {
+    logException('mobile_category_get_single', $e);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Server error',
+        'message' => 'An unexpected error occurred. Please try again later.',
+        'error_details' => 'Error fetching category: ' . $e->getMessage()
     ]);
 }
 ?>

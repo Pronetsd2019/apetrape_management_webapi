@@ -86,16 +86,27 @@ function generateSlug($name, $pdo, $excludeId = null) {
 }
 
 try {
+    // Get JSON input (for backward compatibility)
     $input = json_decode(file_get_contents('php://input'), true);
+    if ($input === null) {
+        $input = [];
+    }
+    
+    // Get category name from JSON or form data
+    $name = null;
+    if (isset($input['name']) && !empty(trim($input['name']))) {
+        $name = trim($input['name']);
+    } elseif (isset($_POST['name']) && !empty(trim($_POST['name']))) {
+        $name = trim($_POST['name']);
+    }
     
     // Validate required fields
-    if (!isset($input['name']) || empty(trim($input['name']))) {
+    if (empty($name)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => 'Field "name" is required.']);
         exit;
     }
     
-    $name = trim($input['name']);
     $parent_id = isset($input['parent_id']) && $input['parent_id'] !== '' ? (int)$input['parent_id'] : null;
     $sort_order = isset($input['sort_order']) ? (int)$input['sort_order'] : 0;
     
@@ -128,8 +139,72 @@ try {
     // Generate unique slug
     $slug = generateSlug($name, $pdo);
     
-    // Prepare img field (optional)
-    $img = isset($input['img']) && !empty($input['img']) ? trim($input['img']) : null;
+    // Handle image upload
+    $img = null;
+    
+    // Check for file upload first (multipart form-data)
+    if (isset($_FILES['img']) && $_FILES['img']['error'] !== UPLOAD_ERR_NO_FILE) {
+        $file = $_FILES['img'];
+        $error = $file['error'];
+        
+        if ($error !== UPLOAD_ERR_OK) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File upload error: ' . $error]);
+            exit;
+        }
+        
+        // Validate file type
+        $allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+        
+        if (!in_array($mimeType, $allowedTypes)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Invalid file type. Allowed types: jpg, jpeg, png, gif, webp']);
+            exit;
+        }
+        
+        // Validate file size (max 5MB)
+        $maxSize = 5 * 1024 * 1024; // 5MB
+        if ($file['size'] > $maxSize) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File size exceeds maximum allowed size of 5MB']);
+            exit;
+        }
+        
+        // Security check
+        if (!is_uploaded_file($file['tmp_name'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Potential file upload attack detected.']);
+            exit;
+        }
+        
+        // Create upload directory if it doesn't exist
+        $uploadDir = dirname(__DIR__) . '/uploads/category';
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+            throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
+        }
+        
+        // Generate unique filename
+        $originalName = basename($file['name'] ?? '');
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        // Use temporary prefix since we don't have category_id yet
+        $safeName = uniqid('category_', true) . ($extension ? '.' . $extension : '');
+        $targetPath = $uploadDir . '/' . $safeName;
+        
+        // Move uploaded file
+        if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+            throw new RuntimeException('Failed to move uploaded image to destination.');
+        }
+        
+        // Store relative path
+        $img = 'uploads/category/' . $safeName;
+    } 
+    // Fallback to JSON input for backward compatibility
+    elseif (isset($input['img']) && !empty($input['img'])) {
+        $img = trim($input['img']);
+    }
     
     // Insert category
     $stmt = $pdo->prepare("
@@ -139,6 +214,21 @@ try {
     $stmt->execute([$name, $parent_id, $slug, $sort_order, $img]);
     
     $category_id = $pdo->lastInsertId();
+    
+    // If we used a temporary filename, rename it with category_id
+    if ($img && strpos($img, 'uploads/category/category_') === 0) {
+        $oldPath = dirname(__DIR__) . '/' . $img;
+        $extension = pathinfo($img, PATHINFO_EXTENSION);
+        $newName = 'category_' . $category_id . '_' . uniqid('', true) . ($extension ? '.' . $extension : '');
+        $newPath = dirname(__DIR__) . '/uploads/category/' . $newName;
+        
+        if (file_exists($oldPath) && rename($oldPath, $newPath)) {
+            $img = 'uploads/category/' . $newName;
+            // Update the database with the new filename
+            $stmt = $pdo->prepare("UPDATE categories SET img = ? WHERE id = ?");
+            $stmt->execute([$img, $category_id]);
+        }
+    }
     
     // Fetch created category
     $stmt = $pdo->prepare("

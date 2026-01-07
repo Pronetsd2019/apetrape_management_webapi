@@ -71,10 +71,7 @@ try {
         SELECT 
             id,
             name,
-            country_id,
-            entry,
-            created_at,
-            updated_at
+            country_id
         FROM region
         WHERE country_id = ?
         ORDER BY name ASC

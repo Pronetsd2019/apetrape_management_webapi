@@ -55,40 +55,131 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Get JSON input
+// Get JSON input (for backward compatibility)
 $input = json_decode(file_get_contents('php://input'), true);
+if ($input === null) {
+    $input = [];
+}
+
+// Get manufacturer name from JSON or form data
+$manufacturer_name = null;
+if (isset($input['manufacturer_name']) && !empty($input['manufacturer_name'])) {
+    $manufacturer_name = trim($input['manufacturer_name']);
+} elseif (isset($_POST['manufacturer_name']) && !empty($_POST['manufacturer_name'])) {
+    $manufacturer_name = trim($_POST['manufacturer_name']);
+}
 
 // Validate required fields
-if (!isset($input['manufacturer_name']) || empty($input['manufacturer_name'])) {
+if (empty($manufacturer_name)) {
     http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Field "name" is required.']);
+    echo json_encode(['success' => false, 'message' => 'Field "manufacturer_name" is required.']);
     exit;
 }
 
 try {
     // Check if manufacturer name already exists
     $stmt = $pdo->prepare("SELECT id FROM manufacturers WHERE name = ?");
-    $stmt->execute([$input['manufacturer_name']]);
+    $stmt->execute([$manufacturer_name]);
     if ($stmt->fetch()) {
         http_response_code(409);
         echo json_encode(['success' => false, 'message' => 'Manufacturer name already exists.']);
         exit;
     }
 
-    // Prepare insert statement with optional img field
-    $img = isset($input['img']) && !empty($input['img']) ? trim($input['img']) : null;
+    // Handle image upload
+    $img = null;
     
+    // Check for file upload first (multipart form-data)
+    if (isset($_FILES['img']) && $_FILES['img']['error'] !== UPLOAD_ERR_NO_FILE) {
+        $file = $_FILES['img'];
+        $error = $file['error'];
+        
+        if ($error !== UPLOAD_ERR_OK) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File upload error: ' . $error]);
+            exit;
+        }
+        
+        // Validate file type
+        $allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+        
+        if (!in_array($mimeType, $allowedTypes)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Invalid file type. Allowed types: jpg, jpeg, png, gif, webp']);
+            exit;
+        }
+        
+        // Validate file size (max 5MB)
+        $maxSize = 5 * 1024 * 1024; // 5MB
+        if ($file['size'] > $maxSize) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'File size exceeds maximum allowed size of 5MB']);
+            exit;
+        }
+        
+        // Security check
+        if (!is_uploaded_file($file['tmp_name'])) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Potential file upload attack detected.']);
+            exit;
+        }
+        
+        // Create upload directory if it doesn't exist
+        $uploadDir = dirname(__DIR__) . '/uploads/brands';
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+            throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
+        }
+        
+        // Generate unique filename
+        $originalName = basename($file['name'] ?? '');
+        $extension = pathinfo($originalName, PATHINFO_EXTENSION);
+        // Use temporary prefix since we don't have manufacturer_id yet
+        $safeName = uniqid('brand_', true) . ($extension ? '.' . $extension : '');
+        $targetPath = $uploadDir . '/' . $safeName;
+        
+        // Move uploaded file
+        if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+            throw new RuntimeException('Failed to move uploaded image to destination.');
+        }
+        
+        // Store relative path
+        $img = 'uploads/brands/' . $safeName;
+    } 
+    // Fallback to JSON input for backward compatibility
+    elseif (isset($input['img']) && !empty($input['img'])) {
+        $img = trim($input['img']);
+    }
+    
+    // Insert manufacturer
     $stmt = $pdo->prepare("
         INSERT INTO manufacturers (name, img)
         VALUES (?, ?)
     ");
 
     $stmt->execute([
-        $input['manufacturer_name'],
+        $manufacturer_name,
         $img
     ]);
 
     $manufacturer_id = $pdo->lastInsertId();
+    
+    // If we used a temporary filename, rename it with manufacturer_id
+    if ($img && strpos($img, 'uploads/brands/brand_') === 0) {
+        $oldPath = dirname(__DIR__) . '/' . $img;
+        $extension = pathinfo($img, PATHINFO_EXTENSION);
+        $newName = 'brand_' . $manufacturer_id . '_' . uniqid('', true) . ($extension ? '.' . $extension : '');
+        $newPath = dirname(__DIR__) . '/uploads/brands/' . $newName;
+        
+        if (file_exists($oldPath) && rename($oldPath, $newPath)) {
+            $img = 'uploads/brands/' . $newName;
+            // Update the database with the new filename
+            $stmt = $pdo->prepare("UPDATE manufacturers SET img = ? WHERE id = ?");
+            $stmt->execute([$img, $manufacturer_id]);
+        }
+    }
 
     // Fetch created manufacturer
     $stmt = $pdo->prepare("SELECT id, name, img, created_at, updated_at FROM manufacturers WHERE id = ?");
