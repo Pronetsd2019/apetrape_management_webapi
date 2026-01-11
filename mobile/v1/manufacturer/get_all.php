@@ -42,10 +42,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 try {
     // Get all manufacturers with model and item counts
     $stmt = $pdo->query("
-        SELECT
+        SELECT 
             m.id AS manufacturer_id,
             m.name AS manufacturer_name,
-            m.img AS manufacturer_img,
+            m.img AS img,
             m.created_at,
             m.updated_at,
             COUNT(DISTINCT vm.id) AS total_models,
@@ -65,7 +65,7 @@ try {
         $formatted_manufacturers[] = [
             'id' => (int)$manufacturer['manufacturer_id'],
             'name' => $manufacturer['manufacturer_name'],
-            'img' => $manufacturer['manufacturer_img'] ? $manufacturer['manufacturer_img'] : null,
+            'img' => $manufacturer['img'] ? $manufacturer['img'] : null,
             'total_models' => (int)$manufacturer['total_models'],
             'total_items' => (int)$manufacturer['total_items'],
             'created_at' => $manufacturer['created_at'],
