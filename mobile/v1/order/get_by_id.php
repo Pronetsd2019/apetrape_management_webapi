@@ -117,7 +117,7 @@ try {
 
     // Get unique item IDs for fetching images
     $itemIds = array_unique(array_column($orderItems, 'item_id'));
-    $itemIds = array_filter($itemIds); // Remove null values
+    $itemIds = array_values(array_filter($itemIds)); // Remove null values and reindex
 
     // Fetch images for all items
     $imagesByItem = [];

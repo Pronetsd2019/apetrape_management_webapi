@@ -220,7 +220,7 @@ try {
 
     // Get unique item IDs and fetch images
     $itemIds = array_unique(array_column($orderItems, 'item_id'));
-    $itemIds = array_filter($itemIds);
+    $itemIds = array_values(array_filter($itemIds)); // Remove null values and reindex
 
     $imagesByItem = [];
     if (!empty($itemIds)) {

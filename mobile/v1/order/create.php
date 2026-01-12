@@ -84,8 +84,6 @@ if (!$delivery_method) {
 
 if (!$pay_method) {
     $errors[] = 'pay_method is required';
-} elseif (!in_array($pay_method, ['cash', 'card', 'bank_transfer'])) {
-    $errors[] = 'pay_method must be one of: cash, card, bank_transfer';
 }
 
 if ($delivery_method === 'delivery' && !$delivery_address) {
@@ -119,7 +117,7 @@ try {
             i.sku,
             i.price,
             i.description,
-            i.cost
+            i.cost_price
         FROM cart c
         JOIN items i ON c.item_id = i.id
         WHERE c.user_id = ?
@@ -184,7 +182,7 @@ try {
             $item['price'],
             $total,
             $order_id,
-            $item['cost']
+            $item['cost_price']
         ]);
     }
 
@@ -223,7 +221,7 @@ try {
 
     // Get unique item IDs and fetch images
     $itemIds = array_unique(array_column($orderItems, 'item_id'));
-    $itemIds = array_filter($itemIds);
+    $itemIds = array_values(array_filter($itemIds)); // Remove null values and reindex
 
     $imagesByItem = [];
     if (!empty($itemIds)) {

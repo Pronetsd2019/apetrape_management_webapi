@@ -22,8 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 /**
  * Mobile Order Get Endpoint
- * GET /mobile/v1/order/get.php?page=1&page_size=10&status=pending
- * Requires JWT authentication - returns user's orders with order items
+ * GET /mobile/v1/order/get.php
+ * Requires JWT authentication - returns all user's orders (excluding deleted) with order items
  */
 
 require_once __DIR__ . '/../../../control/util/connect.php';
@@ -53,46 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-// Parse and validate parameters
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$page_size = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 10;
-$status = isset($_GET['status']) ? $_GET['status'] : null;
-
-// Validate pagination parameters
-if ($page < 1) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Page must be 1 or greater.']);
-    exit;
-}
-
-if ($page_size < 1 || $page_size > 100) {
-    http_response_code(400);
-    echo json_encode(['success' => false, 'message' => 'Page size must be between 1 and 100.']);
-    exit;
-}
-
-$offset = ($page - 1) * $page_size;
-
 try {
-    // Build WHERE conditions
-    $where_conditions = ['o.user_id = ?', 'o.status != ?'];
-    $params = [$user_id, 'deleted'];
-
-    if ($status) {
-        $where_conditions[] = 'o.status = ?';
-        $params[] = $status;
-    }
-
-    $where_clause = 'WHERE ' . implode(' AND ', $where_conditions);
-
-    // First, get total count for pagination
-    $countStmt = $pdo->prepare("SELECT COUNT(*) as total FROM orders o {$where_clause}");
-    $countStmt->execute($params);
-    $totalResult = $countStmt->fetch(PDO::FETCH_ASSOC);
-    $total_items = (int)$totalResult['total'];
-    $total_pages = ceil($total_items / $page_size);
-
-    // Get orders with pagination
+    // Get all orders that are not deleted (simple query, no pagination, no status filter)
     $stmt = $pdo->prepare("
         SELECT
             o.id,
@@ -109,12 +71,12 @@ try {
             o.pickup_address,
             o.delivery_date
         FROM orders o
-        {$where_clause}
+        WHERE o.user_id = ? AND o.status != ?
         ORDER BY o.created_at DESC
-        LIMIT ? OFFSET ?
     ");
-
-    $stmt->execute(array_merge($params, [$page_size, $offset]));
+    $stmt->bindValue(1, $user_id, PDO::PARAM_INT);
+    $stmt->bindValue(2, 'deleted', PDO::PARAM_STR);
+    $stmt->execute();
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     if (empty($orders)) {
@@ -122,47 +84,44 @@ try {
         echo json_encode([
             'success' => true,
             'message' => 'No orders found.',
-            'data' => [],
-            'pagination' => [
-                'current_page' => $page,
-                'page_size' => $page_size,
-                'total_items' => $total_items,
-                'total_pages' => $total_pages,
-                'has_more' => false
-            ]
+            'data' => []
         ]);
         exit;
     }
 
     // Get order IDs for fetching order items
     $orderIds = array_column($orders, 'id');
-    $orderPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
-
-    // Fetch order items for all retrieved orders with item_id
-    $itemsStmt = $pdo->prepare("
-        SELECT
-            oi.id,
-            oi.sku,
-            oi.description,
-            oi.quantity,
-            oi.price,
-            oi.total,
-            oi.created_at,
-            oi.updated_at,
-            oi.order_id,
-            oi.cost,
-            i.id as item_id
-        FROM order_items oi
-        LEFT JOIN items i ON oi.sku = i.sku
-        WHERE oi.order_id IN ({$orderPlaceholders})
-        ORDER BY oi.order_id ASC, oi.id ASC
-    ");
-    $itemsStmt->execute($orderIds);
-    $orderItems = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
+    $orderItems = [];
+    
+    if (!empty($orderIds)) {
+        $orderPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+        
+        // Fetch order items for all retrieved orders with item_id
+        $itemsStmt = $pdo->prepare("
+            SELECT
+                oi.id,
+                oi.sku,
+                oi.description,
+                oi.quantity,
+                oi.price,
+                oi.total,
+                oi.created_at,
+                oi.updated_at,
+                oi.order_id,
+                oi.cost,
+                i.id as item_id
+            FROM order_items oi
+            LEFT JOIN items i ON oi.sku = i.sku
+            WHERE oi.order_id IN ({$orderPlaceholders})
+            ORDER BY oi.order_id ASC, oi.id ASC
+        ");
+        $itemsStmt->execute($orderIds);
+        $orderItems = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 
     // Get unique item IDs for fetching images
     $itemIds = array_unique(array_column($orderItems, 'item_id'));
-    $itemIds = array_filter($itemIds); // Remove null values
+    $itemIds = array_values(array_filter($itemIds)); // Remove null values and reindex
 
     // Fetch images for all items
     $imagesByItem = [];
@@ -240,23 +199,11 @@ try {
         ];
     }
 
-    $has_more = ($page * $page_size) < $total_items;
-
     http_response_code(200);
     echo json_encode([
         'success' => true,
         'message' => 'Orders retrieved successfully.',
-        'data' => $formatted_orders,
-        'pagination' => [
-            'current_page' => $page,
-            'page_size' => $page_size,
-            'total_items' => $total_items,
-            'total_pages' => $total_pages,
-            'has_more' => $has_more
-        ],
-        'filters' => [
-            'status' => $status
-        ]
+        'data' => $formatted_orders
     ]);
 
 } catch (PDOException $e) {
