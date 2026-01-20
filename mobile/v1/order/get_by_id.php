@@ -94,6 +94,18 @@ try {
         exit;
     }
 
+    // Explicitly verify that the order's user_id matches the authenticated user from JWT
+    $order_user_id = (int)$order['user_id'];
+    if ($order_user_id !== $user_id) {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Forbidden',
+            'message' => 'You do not have permission to access this order.'
+        ]);
+        exit;
+    }
+
     // Get order items with item_id for image fetching
     $itemsStmt = $pdo->prepare("
         SELECT
@@ -105,7 +117,6 @@ try {
             oi.total,
             oi.created_at,
             oi.updated_at,
-            oi.cost,
             i.id as item_id
         FROM order_items oi
         LEFT JOIN items i ON oi.sku = i.sku
@@ -158,7 +169,46 @@ try {
 
     // Calculate order totals
     $total_quantity = array_sum(array_column($orderItems, 'quantity'));
-    $total_amount = array_sum(array_column($orderItems, 'total'));
+    $items_total = array_sum(array_column($orderItems, 'total'));
+
+    // Get payments for this order
+    $paymentsStmt = $pdo->prepare("
+        SELECT 
+            `id`, 
+            `order_id`, 
+            `pay_method`, 
+            `create_At`, 
+            `amount`, 
+            `pay_date`, 
+            `ref`, 
+            `transaction_id`
+        FROM `payments`
+        WHERE `order_id` = ?
+        ORDER BY `create_At` ASC
+    ");
+    $paymentsStmt->execute([$order_id]);
+    $payments = $paymentsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Get delivery fee for this order
+    $deliveryFeeStmt = $pdo->prepare("
+        SELECT 
+            `id`, 
+            `fee`, 
+            `order_id`, 
+            `created_at`, 
+            `updated_at`
+        FROM `delivery_fee`
+        WHERE `order_id` = ?
+        ORDER BY `created_at` ASC
+    ");
+    $deliveryFeeStmt->execute([$order_id]);
+    $deliveryFee = $deliveryFeeStmt->fetch(PDO::FETCH_ASSOC);
+
+    // Calculate totals including delivery fee
+    $delivery_fee_amount = $deliveryFee ? (float)$deliveryFee['fee'] : 0;
+    $total_amount = round($items_total + $delivery_fee_amount, 2);
+    $total_paid = array_sum(array_column($payments, 'amount'));
+    $due_amount = max(0, round($total_amount, 2) - round($total_paid, 2));
 
     // Format the complete order response
     $formatted_order = [
@@ -179,8 +229,29 @@ try {
         'summary' => [
             'total_items' => count($orderItems),
             'total_quantity' => (int)$total_quantity,
-            'total_amount' => round($total_amount, 2)
-        ]
+            'total_amount' => round($total_amount, 2),
+            'total_paid' => round($total_paid, 2),
+            'due_amount' => round($due_amount, 2)
+        ],
+        'payments' => array_map(function($payment) {
+            return [
+                'id' => (int)$payment['id'],
+                'order_id' => (int)$payment['order_id'],
+                'pay_method' => $payment['pay_method'],
+                'create_At' => $payment['create_At'],
+                'amount' => round((float)$payment['amount'], 2),
+                'pay_date' => $payment['pay_date'],
+                'ref' => $payment['ref'],
+                'transaction_id' => $payment['transaction_id']
+            ];
+        }, $payments),
+        'delivery_fee' => $deliveryFee ? [
+            'id' => (int)$deliveryFee['id'],
+            'fee' => round((float)$deliveryFee['fee'], 2),
+            'order_id' => (int)$deliveryFee['order_id'],
+            'created_at' => $deliveryFee['created_at'],
+            'updated_at' => $deliveryFee['updated_at']
+        ] : null
     ];
 
     http_response_code(200);

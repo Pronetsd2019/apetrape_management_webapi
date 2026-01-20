@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Mobile Order Get Endpoint
  * GET /mobile/v1/order/get.php
  * Requires JWT authentication - returns all user's orders (excluding deleted) with order items
+ * Orders are sorted by: pending first, then by confirm_date, with cancelled orders last
  */
 
 require_once __DIR__ . '/../../../control/util/connect.php';
@@ -72,7 +73,14 @@ try {
             o.delivery_date
         FROM orders o
         WHERE o.user_id = ? AND o.status != ?
-        ORDER BY o.created_at DESC
+        ORDER BY 
+            CASE o.status
+                WHEN 'pending' THEN 1
+                WHEN 'cancelled' THEN 3
+                ELSE 2
+            END,
+            COALESCE(o.confirm_date, o.created_at) DESC,
+            o.created_at DESC
     ");
     $stmt->bindValue(1, $user_id, PDO::PARAM_INT);
     $stmt->bindValue(2, 'deleted', PDO::PARAM_STR);
@@ -152,6 +160,60 @@ try {
         }
     }
 
+    // Get payments for all orders
+    $paymentsByOrder = [];
+    if (!empty($orderIds)) {
+        $orderPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+        $paymentsStmt = $pdo->prepare("
+            SELECT 
+                `id`, 
+                `order_id`, 
+                `pay_method`, 
+                `create_At`, 
+                `amount`, 
+                `pay_date`, 
+                `ref`, 
+                `transaction_id`
+            FROM `payments`
+            WHERE `order_id` IN ({$orderPlaceholders})
+            ORDER BY `order_id` ASC, `create_At` ASC
+        ");
+        $paymentsStmt->execute($orderIds);
+        $allPayments = $paymentsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Group payments by order_id
+        foreach ($allPayments as $payment) {
+            $paymentsByOrder[$payment['order_id']][] = $payment;
+        }
+    }
+
+    // Get delivery fees for all orders
+    $deliveryFeeByOrder = [];
+    if (!empty($orderIds)) {
+        $orderPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+        $deliveryFeeStmt = $pdo->prepare("
+            SELECT 
+                `id`, 
+                `cost_map_id`, 
+                `fee`, 
+                `order_id`, 
+                `created_at`, 
+                `updated_at`
+            FROM `delivery_fee`
+            WHERE `order_id` IN ({$orderPlaceholders})
+            ORDER BY `order_id` ASC, `created_at` ASC
+        ");
+        $deliveryFeeStmt->execute($orderIds);
+        $allDeliveryFees = $deliveryFeeStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Group delivery fees by order_id (assuming one fee per order, using first if multiple)
+        foreach ($allDeliveryFees as $fee) {
+            if (!isset($deliveryFeeByOrder[$fee['order_id']])) {
+                $deliveryFeeByOrder[$fee['order_id']] = $fee;
+            }
+        }
+    }
+
     // Group order items by order_id and add images
     $itemsByOrder = [];
     foreach ($orderItems as $item) {
@@ -174,7 +236,19 @@ try {
         // Calculate order totals
         $orderItems = $itemsByOrder[$orderId] ?? [];
         $total_quantity = array_sum(array_column($orderItems, 'quantity'));
-        $total_amount = array_sum(array_column($orderItems, 'total'));
+        $items_total = array_sum(array_column($orderItems, 'total'));
+
+        // Get delivery fee for this order
+        $deliveryFee = $deliveryFeeByOrder[$orderId] ?? null;
+        
+        // Calculate totals including delivery fee
+        $delivery_fee_amount = $deliveryFee ? (float)$deliveryFee['fee'] : 0;
+        $total_amount = round($items_total + $delivery_fee_amount, 2);
+
+        // Get payments for this order and calculate totals
+        $payments = $paymentsByOrder[$orderId] ?? [];
+        $total_paid = array_sum(array_column($payments, 'amount'));
+        $due_amount = max(0, round($total_amount, 2) - round($total_paid, 2));
 
         $formatted_orders[] = [
             'id' => (int)$order['id'],
@@ -194,8 +268,30 @@ try {
             'summary' => [
                 'total_items' => count($orderItems),
                 'total_quantity' => (int)$total_quantity,
-                'total_amount' => round($total_amount, 2)
-            ]
+                'total_amount' => round($total_amount, 2),
+                'total_paid' => round($total_paid, 2),
+                'due_amount' => round($due_amount, 2)
+            ],
+            'payments' => array_map(function($payment) {
+                return [
+                    'id' => (int)$payment['id'],
+                    'order_id' => (int)$payment['order_id'],
+                    'pay_method' => $payment['pay_method'],
+                    'create_At' => $payment['create_At'],
+                    'amount' => round((float)$payment['amount'], 2),
+                    'pay_date' => $payment['pay_date'],
+                    'ref' => $payment['ref'],
+                    'transaction_id' => $payment['transaction_id']
+                ];
+            }, $payments),
+            'delivery_fee' => $deliveryFee ? [
+                'id' => (int)$deliveryFee['id'],
+                'cost_map_id' => $deliveryFee['cost_map_id'] ? (int)$deliveryFee['cost_map_id'] : null,
+                'fee' => round((float)$deliveryFee['fee'], 2),
+                'order_id' => (int)$deliveryFee['order_id'],
+                'created_at' => $deliveryFee['created_at'],
+                'updated_at' => $deliveryFee['updated_at']
+            ] : null
         ];
     }
 

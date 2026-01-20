@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Mobile User Address Creation Endpoint
  * POST /mobile/v1/address/create.php
  * Requires JWT authentication - user must be logged in to create an address
+ * Accepts Google Places API format address data
  */
 
 require_once __DIR__ . '/../../../control/util/connect.php';
@@ -59,10 +60,20 @@ if (!$user_id) {
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
 
+if (!$input) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Invalid JSON input.'
+    ]);
+    exit;
+}
+
 // Validate required fields
-$required_fields = ['city_id', 'plot', 'street'];
+$required_fields = ['place_id', 'formatted_address', 'latitude', 'longitude'];
 foreach ($required_fields as $field) {
-    if (!isset($input[$field]) || empty(trim($input[$field]))) {
+    if (!isset($input[$field])) {
         http_response_code(400);
         echo json_encode([
             'success' => false,
@@ -73,22 +84,81 @@ foreach ($required_fields as $field) {
     }
 }
 
-$city_id = trim($input['city_id']);
-$plot = trim($input['plot']);
-$street = trim($input['street']);
+// Extract and validate required fields
+$place_id = trim($input['place_id']);
+$formatted_address = trim($input['formatted_address']);
+$latitude = $input['latitude'];
+$longitude = $input['longitude'];
 
-// Validate city_id is numeric
-if (!is_numeric($city_id)) {
+// Validate place_id is not empty
+if (empty($place_id)) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
         'error' => 'Validation failed',
-        'message' => 'City ID must be a valid number.'
+        'message' => 'Place ID cannot be empty.'
     ]);
     exit;
 }
 
-$city_id = (int)$city_id;
+// Validate formatted_address is not empty
+if (empty($formatted_address)) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Formatted address cannot be empty.'
+    ]);
+    exit;
+}
+
+// Validate latitude and longitude are numeric
+if (!is_numeric($latitude) || !is_numeric($longitude)) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Latitude and longitude must be valid numbers.'
+    ]);
+    exit;
+}
+
+$latitude = (float)$latitude;
+$longitude = (float)$longitude;
+
+// Validate latitude range (-90 to 90)
+if ($latitude < -90 || $latitude > 90) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Latitude must be between -90 and 90.'
+    ]);
+    exit;
+}
+
+// Validate longitude range (-180 to 180)
+if ($longitude < -180 || $longitude > 180) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Longitude must be between -180 and 180.'
+    ]);
+    exit;
+}
+
+// Extract address components (all optional)
+$address_components = $input['address_components'] ?? [];
+$street_number = isset($address_components['street_number']) ? trim($address_components['street_number']) : null;
+$street = isset($address_components['street']) ? trim($address_components['street']) : null;
+$city = isset($address_components['city']) ? trim($address_components['city']) : null;
+$sublocality = isset($address_components['sublocality']) ? trim($address_components['sublocality']) : null;
+$district = isset($address_components['district']) ? trim($address_components['district']) : null;
+$region = isset($address_components['region']) ? trim($address_components['region']) : null;
+$country = isset($address_components['country']) ? trim($address_components['country']) : null;
+$country_code = isset($address_components['country_code']) ? trim($address_components['country_code']) : null;
+$postal_code = isset($address_components['postal_code']) ? trim($address_components['postal_code']) : null;
 
 try {
     // Verify user exists and is active
@@ -116,31 +186,13 @@ try {
         exit;
     }
 
-    // Validate city exists
-    $stmt = $pdo->prepare("SELECT id, name FROM city WHERE id = ?");
-    $stmt->execute([$city_id]);
-    $city = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$city) {
-        http_response_code(404);
-        echo json_encode([
-            'success' => false,
-            'error' => 'Not found',
-            'message' => 'City not found.'
-        ]);
-        exit;
-    }
-
-    // Check if user already has the exact same address
+    // Check if user already has an address with the same place_id
     $stmt = $pdo->prepare("
         SELECT id 
-        FROM user_address 
-        WHERE user_id = ? 
-        AND city = ? 
-        AND LOWER(TRIM(plot)) = LOWER(TRIM(?)) 
-        AND LOWER(TRIM(street)) = LOWER(TRIM(?))
+        FROM user_addresses 
+        WHERE user_id = ? AND place_id = ?
     ");
-    $stmt->execute([$user_id, $city_id, $plot, $street]);
+    $stmt->execute([$user_id, $place_id]);
     $existingAddress = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($existingAddress) {
@@ -155,11 +207,43 @@ try {
 
     // Insert the address
     $stmt = $pdo->prepare("
-        INSERT INTO user_address (user_id, city, plot, street)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO user_addresses (
+            user_id, 
+            place_id, 
+            formatted_address, 
+            latitude, 
+            longitude, 
+            street_number, 
+            street, 
+            sublocality, 
+            city, 
+            district, 
+            region, 
+            country, 
+            country_code, 
+            postal_code,
+            created_at,
+            updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     ");
     
-    $result = $stmt->execute([$user_id, $city_id, $plot, $street]);
+    $result = $stmt->execute([
+        $user_id,
+        $place_id,
+        $formatted_address,
+        $latitude,
+        $longitude,
+        $street_number,
+        $street,
+        $sublocality,
+        $city,
+        $district,
+        $region,
+        $country,
+        $country_code,
+        $postal_code
+    ]);
 
     if (!$result) {
         http_response_code(500);
@@ -174,27 +258,27 @@ try {
 
     $address_id = $pdo->lastInsertId();
 
-    // Fetch the created address with city, region, and country details
+    // Fetch the created address
     $stmt = $pdo->prepare("
         SELECT 
-            ua.id,
-            ua.user_id,
-            ua.city,
-            ua.plot,
-            ua.street,
-            ua.created_at,
-            ua.updated_at,
-            c.id AS city_id,
-            c.name AS city_name,
-            r.id AS region_id,
-            r.name AS region_name,
-            co.id AS country_id,
-            co.name AS country_name
-        FROM user_address ua
-        INNER JOIN city c ON ua.city = c.id
-        INNER JOIN region r ON c.region_id = r.id
-        INNER JOIN country co ON r.country_id = co.id
-        WHERE ua.id = ?
+            id,
+            place_id,
+            formatted_address,
+            latitude,
+            longitude,
+            street_number,
+            street,
+            sublocality,
+            city,
+            district,
+            region,
+            country,
+            country_code,
+            postal_code,
+            created_at,
+            updated_at
+        FROM user_addresses
+        WHERE id = ?
     ");
     $stmt->execute([$address_id]);
     $address = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -203,7 +287,7 @@ try {
     logError('mobile_address_create', 'User address created', [
         'user_id' => $user_id,
         'address_id' => $address_id,
-        'city_id' => $city_id,
+        'place_id' => $place_id,
         'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
     ]);
 
@@ -213,11 +297,19 @@ try {
         'message' => 'Address created successfully.',
         'data' => [
             'id' => (int)$address['id'],
+            'place_id' => $address['place_id'],
+            'formatted_address' => $address['formatted_address'],
+            'latitude' => (float)$address['latitude'],
+            'longitude' => (float)$address['longitude'],
+            'street_number' => $address['street_number'],
             'street' => $address['street'],
-            'plot' => $address['plot'],
-            'city' => $address['city_name'],
-            'region' => $address['region_name'],
-            'country' => $address['country_name'],
+            'sublocality' => $address['sublocality'],
+            'city' => $address['city'],
+            'district' => $address['district'],
+            'region' => $address['region'],
+            'country' => $address['country'],
+            'country_code' => $address['country_code'],
+            'postal_code' => $address['postal_code'],
             'created_at' => $address['created_at'],
             'updated_at' => $address['updated_at']
         ]

@@ -72,27 +72,28 @@ try {
         exit;
     }
 
-    // Get all addresses for this user with location hierarchy
+    // Get all addresses for this user
     $stmt = $pdo->prepare("
         SELECT 
-            ua.id,
-            ua.user_id,
-            ua.street,
-            ua.plot,
-            ua.created_at,
-            ua.updated_at,
-            c.id AS city_id,
-            c.name AS city_name,
-            r.id AS region_id,
-            r.name AS region_name,
-            co.id AS country_id,
-            co.name AS country_name
-        FROM user_address ua
-        INNER JOIN city c ON ua.city = c.id
-        INNER JOIN region r ON c.region_id = r.id
-        INNER JOIN country co ON r.country_id = co.id
-        WHERE ua.user_id = ?
-        ORDER BY ua.created_at DESC
+            id,
+            place_id,
+            formatted_address,
+            latitude,
+            longitude,
+            street_number,
+            street,
+            sublocality,
+            city,
+            district,
+            region,
+            country,
+            country_code,
+            postal_code,
+            created_at,
+            updated_at
+        FROM user_addresses
+        WHERE user_id = ?
+        ORDER BY created_at DESC
     ");
     $stmt->execute([$user_id]);
     $addresses = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -102,19 +103,20 @@ try {
     foreach ($addresses as $address) {
         $formatted_addresses[] = [
             'id' => (int)$address['id'],
-            'street' => $address['street'],
-            'plot' => $address['plot'],
-            'city' => [
-                'id' => (int)$address['city_id'],
-                'name' => $address['city_name']
-            ],
-            'region' => [
-                'id' => (int)$address['region_id'],
-                'name' => $address['region_name']
-            ],
-            'country' => [
-                'id' => (int)$address['country_id'],
-                'name' => $address['country_name']
+            'place_id' => $address['place_id'],
+            'formatted_address' => $address['formatted_address'],
+            'latitude' => (float)$address['latitude'],
+            'longitude' => (float)$address['longitude'],
+            'address_components' => [
+                'street_number' => $address['street_number'],
+                'street' => $address['street'],
+                'city' => $address['city'],
+                'sublocality' => $address['sublocality'],
+                'district' => $address['district'],
+                'region' => $address['region'],
+                'country' => $address['country'],
+                'country_code' => $address['country_code'],
+                'postal_code' => $address['postal_code']
             ],
             'created_at' => $address['created_at'],
             'updated_at' => $address['updated_at']

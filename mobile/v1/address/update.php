@@ -25,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * PUT /mobile/v1/address/update.php
  * Supports both single and multiple address updates
  * Requires JWT authentication - user can only update their own addresses
+ * Accepts Google Places API format address data
  */
 
 require_once __DIR__ . '/../../../control/util/connect.php';
@@ -59,6 +60,16 @@ if (!$user_id) {
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
+
+if (!$input) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Validation failed',
+        'message' => 'Invalid JSON input.'
+    ]);
+    exit;
+}
 
 // Normalize input to array format (support both single object and array)
 $addresses_to_update = [];
@@ -123,9 +134,10 @@ try {
 
     foreach ($addresses_to_update as $index => $addr) {
         $address_id = isset($addr['id']) ? trim($addr['id']) : null;
-        $city_id = isset($addr['city_id']) ? trim($addr['city_id']) : null;
-        $plot = isset($addr['plot']) ? trim($addr['plot']) : null;
-        $street = isset($addr['street']) ? trim($addr['street']) : null;
+        $place_id = isset($addr['place_id']) ? trim($addr['place_id']) : null;
+        $formatted_address = isset($addr['formatted_address']) ? trim($addr['formatted_address']) : null;
+        $latitude = isset($addr['latitude']) ? $addr['latitude'] : null;
+        $longitude = isset($addr['longitude']) ? $addr['longitude'] : null;
 
         // Validate required fields for this address
         if (!$address_id || !is_numeric($address_id)) {
@@ -137,38 +149,59 @@ try {
             continue;
         }
 
-        if (!$city_id || !is_numeric($city_id)) {
+        if (empty($place_id)) {
             $errors[] = [
                 'index' => $index,
                 'address_id' => $address_id,
-                'error' => 'Valid city_id is required.'
+                'error' => 'Place ID is required.'
             ];
             continue;
         }
 
-        if (empty($plot)) {
+        if (empty($formatted_address)) {
             $errors[] = [
                 'index' => $index,
                 'address_id' => $address_id,
-                'error' => 'Plot is required.'
+                'error' => 'Formatted address is required.'
             ];
             continue;
         }
 
-        if (empty($street)) {
+        if (!is_numeric($latitude) || !is_numeric($longitude)) {
             $errors[] = [
                 'index' => $index,
                 'address_id' => $address_id,
-                'error' => 'Street is required.'
+                'error' => 'Latitude and longitude must be valid numbers.'
             ];
             continue;
         }
 
         $address_id = (int)$address_id;
-        $city_id = (int)$city_id;
+        $latitude = (float)$latitude;
+        $longitude = (float)$longitude;
+
+        // Validate latitude range (-90 to 90)
+        if ($latitude < -90 || $latitude > 90) {
+            $errors[] = [
+                'index' => $index,
+                'address_id' => $address_id,
+                'error' => 'Latitude must be between -90 and 90.'
+            ];
+            continue;
+        }
+
+        // Validate longitude range (-180 to 180)
+        if ($longitude < -180 || $longitude > 180) {
+            $errors[] = [
+                'index' => $index,
+                'address_id' => $address_id,
+                'error' => 'Longitude must be between -180 and 180.'
+            ];
+            continue;
+        }
 
         // Check if address exists and belongs to this user
-        $stmt = $pdo->prepare("SELECT id, user_id FROM user_address WHERE id = ? AND user_id = ?");
+        $stmt = $pdo->prepare("SELECT id, user_id FROM user_addresses WHERE id = ? AND user_id = ?");
         $stmt->execute([$address_id, $user_id]);
         $existing_address = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -181,31 +214,15 @@ try {
             continue;
         }
 
-        // Validate city exists
-        $stmt = $pdo->prepare("SELECT id, name FROM city WHERE id = ?");
-        $stmt->execute([$city_id]);
-        $city = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$city) {
-            $errors[] = [
-                'index' => $index,
-                'address_id' => $address_id,
-                'error' => 'City not found.'
-            ];
-            continue;
-        }
-
-        // Check if user already has the exact same address (excluding current address)
+        // Check if user already has an address with the same place_id (excluding current address)
         $stmt = $pdo->prepare("
             SELECT id 
-            FROM user_address 
+            FROM user_addresses 
             WHERE user_id = ? 
-            AND city = ? 
-            AND LOWER(TRIM(plot)) = LOWER(TRIM(?)) 
-            AND LOWER(TRIM(street)) = LOWER(TRIM(?))
+            AND place_id = ?
             AND id != ?
         ");
-        $stmt->execute([$user_id, $city_id, $plot, $street, $address_id]);
+        $stmt->execute([$user_id, $place_id, $address_id]);
         $duplicate_address = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($duplicate_address) {
@@ -217,35 +234,78 @@ try {
             continue;
         }
 
+        // Extract address components (all optional)
+        $address_components = $addr['address_components'] ?? [];
+        $street_number = isset($address_components['street_number']) ? trim($address_components['street_number']) : null;
+        $street = isset($address_components['street']) ? trim($address_components['street']) : null;
+        $city = isset($address_components['city']) ? trim($address_components['city']) : null;
+        $sublocality = isset($address_components['sublocality']) ? trim($address_components['sublocality']) : null;
+        $district = isset($address_components['district']) ? trim($address_components['district']) : null;
+        $region = isset($address_components['region']) ? trim($address_components['region']) : null;
+        $country = isset($address_components['country']) ? trim($address_components['country']) : null;
+        $country_code = isset($address_components['country_code']) ? trim($address_components['country_code']) : null;
+        $postal_code = isset($address_components['postal_code']) ? trim($address_components['postal_code']) : null;
+
         // Update the address
         $stmt = $pdo->prepare("
-            UPDATE user_address 
-            SET city = ?, plot = ?, street = ?, updated_at = NOW()
+            UPDATE user_addresses 
+            SET 
+                place_id = ?,
+                formatted_address = ?,
+                latitude = ?,
+                longitude = ?,
+                street_number = ?,
+                street = ?,
+                sublocality = ?,
+                city = ?,
+                district = ?,
+                region = ?,
+                country = ?,
+                country_code = ?,
+                postal_code = ?,
+                updated_at = NOW()
             WHERE id = ? AND user_id = ?
         ");
-        $update_result = $stmt->execute([$city_id, $plot, $street, $address_id, $user_id]);
+        $update_result = $stmt->execute([
+            $place_id,
+            $formatted_address,
+            $latitude,
+            $longitude,
+            $street_number,
+            $street,
+            $sublocality,
+            $city,
+            $district,
+            $region,
+            $country,
+            $country_code,
+            $postal_code,
+            $address_id,
+            $user_id
+        ]);
 
         if ($update_result && $stmt->rowCount() > 0) {
-            // Fetch updated address with location hierarchy
+            // Fetch updated address
             $stmt = $pdo->prepare("
                 SELECT 
-                    ua.id,
-                    ua.user_id,
-                    ua.street,
-                    ua.plot,
-                    ua.created_at,
-                    ua.updated_at,
-                    c.id AS city_id,
-                    c.name AS city_name,
-                    r.id AS region_id,
-                    r.name AS region_name,
-                    co.id AS country_id,
-                    co.name AS country_name
-                FROM user_address ua
-                INNER JOIN city c ON ua.city = c.id
-                INNER JOIN region r ON c.region_id = r.id
-                INNER JOIN country co ON r.country_id = co.id
-                WHERE ua.id = ?
+                    id,
+                    place_id,
+                    formatted_address,
+                    latitude,
+                    longitude,
+                    street_number,
+                    street,
+                    sublocality,
+                    city,
+                    district,
+                    region,
+                    country,
+                    country_code,
+                    postal_code,
+                    created_at,
+                    updated_at
+                FROM user_addresses
+                WHERE id = ?
             ");
             $stmt->execute([$address_id]);
             $updated_address = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -256,20 +316,19 @@ try {
                 'success' => true,
                 'data' => [
                     'id' => (int)$updated_address['id'],
+                    'place_id' => $updated_address['place_id'],
+                    'formatted_address' => $updated_address['formatted_address'],
+                    'latitude' => (float)$updated_address['latitude'],
+                    'longitude' => (float)$updated_address['longitude'],
+                    'street_number' => $updated_address['street_number'],
                     'street' => $updated_address['street'],
-                    'plot' => $updated_address['plot'],
-                    'city' => [
-                        'id' => (int)$updated_address['city_id'],
-                        'name' => $updated_address['city_name']
-                    ],
-                    'region' => [
-                        'id' => (int)$updated_address['region_id'],
-                        'name' => $updated_address['region_name']
-                    ],
-                    'country' => [
-                        'id' => (int)$updated_address['country_id'],
-                        'name' => $updated_address['country_name']
-                    ],
+                    'sublocality' => $updated_address['sublocality'],
+                    'city' => $updated_address['city'],
+                    'district' => $updated_address['district'],
+                    'region' => $updated_address['region'],
+                    'country' => $updated_address['country'],
+                    'country_code' => $updated_address['country_code'],
+                    'postal_code' => $updated_address['postal_code'],
                     'created_at' => $updated_address['created_at'],
                     'updated_at' => $updated_address['updated_at']
                 ]
