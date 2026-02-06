@@ -90,7 +90,7 @@ try {
     $uploaded_images = [];
 
     if (!empty($_FILES['images'])) {
-        $uploadDir = dirname(__DIR__, 3) . '/control/uploads/request';
+        $uploadDir = dirname(__DIR__, 3) . '/uploads/request';
 
         // Create upload directory if it doesn't exist
         if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {

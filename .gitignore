@@ -23,6 +23,9 @@ config.ini
 secrets.php
 credentials.php
 
+# Firebase service accounts (never commit)
+login-with-d3604-firebase-adminsdk-fbsvc-c16c4ee5e7.json
+
 # IDE and Editor files
 .idea/
 .vscode/

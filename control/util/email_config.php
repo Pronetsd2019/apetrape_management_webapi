@@ -47,7 +47,9 @@ $emailConfig = [
     'from_email' => $_ENV['FROM_EMAIL'] ?? 'sales@apetrape.com',
     'from_name' => $_ENV['FROM_NAME'] ?? 'APE Trape PTY Ltd',
     'reply_to_email' => $_ENV['REPLY_TO_EMAIL'] ?? 'sales@apetrape.com',
-    'reply_to_name' => $_ENV['REPLY_TO_NAME'] ?? 'APE Trape PTY Ltd'
+    'reply_to_name' => $_ENV['REPLY_TO_NAME'] ?? 'APE Trape PTY Ltd',
+    // Base URL for email images (e.g. https://apetrape.com) - no trailing slash
+    'assets_base_url' => rtrim($_ENV['ASSETS_BASE_URL'] ?? $_ENV['APP_URL'] ?? '', '/')
 ];
 
 /**

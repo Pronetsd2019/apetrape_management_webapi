@@ -37,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
 require_once __DIR__ . '/../util/auth_middleware.php';
+require_once __DIR__ . '/../util/order_tracker.php';
 
 // Ensure the request is authenticated
 $authUser = requireMobileJwtAuth();
@@ -192,6 +193,9 @@ try {
     ");
 
     $updateStmt->execute($params);
+
+    // Track order update
+    trackOrderAction($pdo, $order_id, 'updated');
 
     // Get updated order
     $getOrderStmt = $pdo->prepare("

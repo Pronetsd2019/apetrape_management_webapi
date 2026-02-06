@@ -86,7 +86,7 @@ try {
         $img_path = $manufacturer['img'];
         // Check if it's a local file (not a URL)
         if (!filter_var($img_path, FILTER_VALIDATE_URL) && strpos($img_path, 'uploads/') === 0) {
-            $file_path = dirname(__DIR__) . '/' . $img_path;
+            $file_path = dirname(__DIR__, 2) . '/' . $img_path;
             if (file_exists($file_path)) {
                 @unlink($file_path); // Suppress errors for unlinking
             }

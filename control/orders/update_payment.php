@@ -24,6 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../util/error_logger.php';
  require_once __DIR__ . '/../middleware/auth_middleware.php';
  require_once __DIR__ . '/../util/check_permission.php';
+ require_once __DIR__ . '/../util/order_tracker.php';
+ require_once __DIR__ . '/../util/firebase_messaging.php';
+ require_once __DIR__ . '/../util/notification_logger.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -121,8 +124,8 @@ try {
         exit;
     }
 
-    // Check if order exists
-    $checkOrderStmt = $pdo->prepare("SELECT id FROM orders WHERE id = ?");
+    // Check if order exists (also fetch order owner user_id for notifications)
+    $checkOrderStmt = $pdo->prepare("SELECT id, user_id, order_no FROM orders WHERE id = ?");
     $checkOrderStmt->execute([$orderId]);
     $existingOrder = $checkOrderStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -199,6 +202,156 @@ try {
             WHERE id = ?
         ");
         $updateStatusStmt->execute([$payStatus, $orderId]);
+
+        // Track payment recording action based on payment status
+        $trackAction = 'payment_recorded';
+        if ($payStatus === 'partial paid') {
+            $trackAction = 'Payment recived: Partial payment';
+        } elseif ($payStatus === 'paid') {
+            $trackAction = 'Payment recived: Full payment';
+        } elseif ($payStatus === 'over paid') {
+            $trackAction = 'Payment recived: Overpaid';
+        }
+        
+        // Log payment action first
+        trackOrderAction($pdo, $orderId, $trackAction);
+        
+        // Then log order processing if fully paid or overpaid
+        if ($payStatus === 'paid' || $payStatus === 'over paid') {
+            trackOrderAction($pdo, $orderId, 'order being processed');
+        }
+
+        // Best-effort: send notifications to the order owner according to their preferences.
+        // Do NOT fail the payment endpoint if any notification fails.
+        try {
+            $orderOwnerUserId = (int)($existingOrder['user_id'] ?? 0);
+            if ($orderOwnerUserId <= 0) {
+                // No order owner, skip notifications
+            } else {
+                $orderNo = $existingOrder['order_no'] ?? $orderId;
+                $notifTitle = 'Payment Received';
+                $notifBody = "Payment received for order {$orderNo}.";
+
+                // Fetch notification preferences (defaults: push=1, email=0, sms=0)
+                $prefStmt = $pdo->prepare("
+                    SELECT push_notifications, email_notifications, sms_notifications
+                    FROM user_notification_preferences
+                    WHERE user_id = ?
+                ");
+                $prefStmt->execute([$orderOwnerUserId]);
+                $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+                $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+                $emailEnabled = $prefs ? (int)$prefs['email_notifications'] === 1 : false;
+                $smsEnabled = $prefs ? (int)$prefs['sms_notifications'] === 1 : false;
+
+                // Fetch order owner contact for email/SMS
+                $userStmt = $pdo->prepare("SELECT email, cell, name, surname FROM users WHERE id = ?");
+                $userStmt->execute([$orderOwnerUserId]);
+                $orderOwner = $userStmt->fetch(PDO::FETCH_ASSOC);
+                $toName = $orderOwner ? trim(($orderOwner['name'] ?? '') . ' ' . ($orderOwner['surname'] ?? '')) : 'Customer';
+                if ($toName === '') $toName = 'Customer';
+                $orderOwnerEmail = $orderOwner && !empty(trim((string)($orderOwner['email'] ?? ''))) ? trim($orderOwner['email']) : null;
+                $orderOwnerCell = $orderOwner && !empty(trim((string)($orderOwner['cell'] ?? ''))) ? trim($orderOwner['cell']) : null;
+
+                $deliveredVia = null;
+                $loggedIds = null;
+
+                if ($pushEnabled) {
+                    $deliveredVia = 'push';
+                    $loggedIds = logUserNotification(
+                        $pdo,
+                        $orderOwnerUserId,
+                        'payment_received',
+                        $notifTitle,
+                        $notifBody,
+                        'order',
+                        (int)$orderId,
+                        [
+                            'order_id' => (string)$orderId,
+                            'payment_status' => (string)$payStatus,
+                            'amount' => (string)$amount,
+                            'transaction_id' => (string)$transactionId
+                        ],
+                        'push'
+                    );
+                    $notifData = [
+                        'route' => 'order',
+                        'order_id' => (string)$orderId,
+                        'payment_status' => (string)$payStatus,
+                        'amount' => (string)$amount,
+                        'transaction_id' => (string)$transactionId,
+                        'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
+                        'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
+                    ];
+                    sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+                }
+
+                if ($emailEnabled && $orderOwnerEmail !== null && filter_var($orderOwnerEmail, FILTER_VALIDATE_EMAIL)) {
+                    if ($deliveredVia === null) {
+                        $deliveredVia = 'email';
+                        $loggedIds = logUserNotification(
+                            $pdo,
+                            $orderOwnerUserId,
+                            'payment_received',
+                            $notifTitle,
+                            $notifBody,
+                            'order',
+                            (int)$orderId,
+                            [
+                                'order_id' => (string)$orderId,
+                                'payment_status' => (string)$payStatus,
+                                'amount' => (string)$amount,
+                                'transaction_id' => (string)$transactionId
+                            ],
+                            'email'
+                        );
+                    }
+                    require_once __DIR__ . '/../util/email_sender.php';
+                    sendPaymentReceivedEmail(
+                        $orderOwnerEmail,
+                        $toName,
+                        $orderNo,
+                        $amount,
+                        $payStatus,
+                        ['order_id' => $orderId, 'user_id' => $orderOwnerUserId]
+                    );
+                }
+
+                if ($smsEnabled && $orderOwnerCell !== null) {
+                    if ($deliveredVia === null) {
+                        $deliveredVia = 'sms';
+                        $loggedIds = logUserNotification(
+                            $pdo,
+                            $orderOwnerUserId,
+                            'payment_received',
+                            $notifTitle,
+                            $notifBody,
+                            'order',
+                            (int)$orderId,
+                            [
+                                'order_id' => (string)$orderId,
+                                'payment_status' => (string)$payStatus,
+                                'amount' => (string)$amount,
+                                'transaction_id' => (string)$transactionId
+                            ],
+                            'sms'
+                        );
+                    }
+                    $smsMessage = "Payment received for order {$orderNo}. Amount: {$amount}. Thank you.";
+                    require_once __DIR__ . '/../util/sms_sender.php';
+                    sendSms(
+                        $orderOwnerCell,
+                        $smsMessage,
+                        ['order_id' => $orderId, 'user_id' => $orderOwnerUserId]
+                    );
+                }
+            }
+        } catch (Throwable $e) {
+            logException('orders_update_payment_notifications', $e, [
+                'order_id' => $orderId,
+                'pay_status' => $payStatus
+            ]);
+        }
 
         http_response_code(201);
         echo json_encode([

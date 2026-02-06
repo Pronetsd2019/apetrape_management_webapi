@@ -47,23 +47,30 @@ if (!isset($input['email']) || !isset($input['password'])) {
     echo json_encode([
         'success' => false,
         'error' => 'Validation failed',
-        'message' => 'Email and password are required.'
+        'message' => 'Email/phone and password are required.'
     ]);
     exit;
 }
 
-$email = trim($input['email']);
+$identifier = trim($input['email']); // frontend uses one field for email OR phone
 $password = $input['password'];
 
-// Validate email format
-if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-    http_response_code(400);
-    echo json_encode([
-        'success' => false,
-        'error' => 'Validation failed',
-        'message' => 'Invalid email address format.'
-    ]);
-    exit;
+// Determine whether identifier is email or phone
+$email = null;
+$phone = null;
+if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+    $email = $identifier;
+} else {
+    $phone = preg_replace('/\s+/', '', $identifier);
+    if (!$phone || !preg_match('/^\+?[0-9]{7,15}$/', $phone)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Invalid email or phone number format.'
+        ]);
+        exit;
+    }
 }
 
 // Lockout configuration
@@ -75,23 +82,36 @@ define('LOCKOUT_DURATION_STAGE_2_MINUTES', 10);  // 10 minutes
 define('LOCKOUT_STAGE_PERMANENT', 3);  // Permanent lockout stage
 
 try {
-    // Get user by email (only email/password users) - including lockout fields
-    $stmt = $pdo->prepare("
-        SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, 
-               COALESCE(failed_attempts, 0) as failed_attempts,
-               locked_until,
-               COALESCE(lockout_stage, 0) as lockout_stage,
-               created_at, updated_at
-        FROM users
-        WHERE LOWER(email) = LOWER(?) AND provider = 'email'
-    ");
-    $stmt->execute([$email]);
+    // Get user by email OR phone (email/password + phone/password users) - including lockout fields
+    if ($email !== null) {
+        $stmt = $pdo->prepare("
+            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, 
+                   COALESCE(failed_attempts, 0) as failed_attempts,
+                   locked_until,
+                   COALESCE(lockout_stage, 0) as lockout_stage,
+                   created_at, updated_at
+            FROM users
+            WHERE LOWER(email) = LOWER(?) AND provider IN ('email','phone')
+        ");
+        $stmt->execute([$email]);
+    } else {
+        $stmt = $pdo->prepare("
+            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, 
+                   COALESCE(failed_attempts, 0) as failed_attempts,
+                   locked_until,
+                   COALESCE(lockout_stage, 0) as lockout_stage,
+                   created_at, updated_at
+            FROM users
+            WHERE cell = ? AND provider IN ('email','phone')
+        ");
+        $stmt->execute([$phone]);
+    }
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Check if user exists
     if (!$user) {
-        logError('mobile_auth_login', 'Login attempt with invalid email', [
-            'email' => $email,
+        logError('mobile_auth_login', 'Login attempt with invalid identifier', [
+            'identifier' => $identifier,
             'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
         ]);
         
@@ -321,10 +341,91 @@ try {
     $token_payload = [
         'sub' => (int) $user['id'],
         'user_id' => (int) $user['id'],
-        'email' => $user['email']
+        'email' => $user['email'] ?? ''
     ];
 
     $access_token = generateJWT($token_payload, 60); // 60 minutes = 3600 seconds
+
+    // Handle optional FCM token save (best-effort, don't fail login if this fails)
+    if (isset($input['fcm_token']) && !empty(trim($input['fcm_token']))) {
+        try {
+            $fcm_token = trim($input['fcm_token']);
+            
+            // Normalize device_id: treat empty string as NULL
+            $device_id = isset($input['device_id']) && !empty(trim($input['device_id'])) 
+                ? trim($input['device_id']) 
+                : null;
+            
+            // Validate and normalize platform
+            $platform = null;
+            if (isset($input['platform']) && !empty(trim($input['platform']))) {
+                $platformInput = strtolower(trim($input['platform']));
+                $allowedPlatforms = ['android', 'ios', 'web'];
+                
+                if (in_array($platformInput, $allowedPlatforms)) {
+                    $platform = $platformInput;
+                }
+            }
+            
+            // Upsert FCM token
+            // Check if a row exists for this (user_id, device_id)
+            if ($device_id === null) {
+                $checkStmt = $pdo->prepare("
+                    SELECT id FROM user_fcm_tokens 
+                    WHERE user_id = ? AND device_id IS NULL
+                    LIMIT 1
+                ");
+                $checkStmt->execute([$user['id']]);
+            } else {
+                $checkStmt = $pdo->prepare("
+                    SELECT id FROM user_fcm_tokens 
+                    WHERE user_id = ? AND device_id = ?
+                    LIMIT 1
+                ");
+                $checkStmt->execute([$user['id'], $device_id]);
+            }
+            
+            $existingRow = $checkStmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($existingRow) {
+                // Update existing row
+                $updateStmt = $pdo->prepare("
+                    UPDATE user_fcm_tokens 
+                    SET fcm_token = ?, platform = ?, updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $updateStmt->execute([$fcm_token, $platform, $existingRow['id']]);
+            } else {
+                // Check if token exists elsewhere and delete it (token reassignment)
+                $tokenCheckStmt = $pdo->prepare("
+                    SELECT id FROM user_fcm_tokens WHERE fcm_token = ? LIMIT 1
+                ");
+                $tokenCheckStmt->execute([$fcm_token]);
+                $existingToken = $tokenCheckStmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($existingToken) {
+                    $deleteStmt = $pdo->prepare("DELETE FROM user_fcm_tokens WHERE id = ?");
+                    $deleteStmt->execute([$existingToken['id']]);
+                }
+                
+                // Insert new row
+                $insertStmt = $pdo->prepare("
+                    INSERT INTO user_fcm_tokens (user_id, fcm_token, device_id, platform, updated_at)
+                    VALUES (?, ?, ?, ?, NOW())
+                ");
+                $insertStmt->execute([$user['id'], $fcm_token, $device_id, $platform]);
+            }
+            
+            logError('mobile_auth_login', 'FCM token saved during login', [
+                'user_id' => $user['id'],
+                'device_id' => $device_id,
+                'platform' => $platform
+            ]);
+        } catch (Exception $fcmError) {
+            // Log error but don't fail login
+            logException('mobile_auth_login_fcm', $fcmError);
+        }
+    }
 
     // Return response matching Flutter expectations
     http_response_code(200);

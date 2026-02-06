@@ -190,14 +190,14 @@ try {
         
         // Delete old image file if it exists and is a local file
         if ($old_img && !filter_var($old_img, FILTER_VALIDATE_URL) && strpos($old_img, 'uploads/') === 0) {
-            $old_file_path = dirname(__DIR__) . '/' . $old_img;
+            $old_file_path = dirname(__DIR__, 2) . '/' . $old_img;
             if (file_exists($old_file_path)) {
                 @unlink($old_file_path); // Suppress errors for unlinking
             }
         }
         
         // Create upload directory if it doesn't exist
-        $uploadDir = dirname(__DIR__) . '/uploads/brands';
+        $uploadDir = dirname(__DIR__, 2) . '/uploads/brands';
         if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
             throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
         }
@@ -223,7 +223,7 @@ try {
         if ($input['img'] === '') {
             // Delete old image file if it exists and is a local file
             if ($old_img && !filter_var($old_img, FILTER_VALIDATE_URL) && strpos($old_img, 'uploads/') === 0) {
-                $old_file_path = dirname(__DIR__) . '/' . $old_img;
+                $old_file_path = dirname(__DIR__, 2) . '/' . $old_img;
                 if (file_exists($old_file_path)) {
                     @unlink($old_file_path); // Suppress errors for unlinking
                 }

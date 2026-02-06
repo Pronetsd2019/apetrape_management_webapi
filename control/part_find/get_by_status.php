@@ -115,7 +115,7 @@ try {
             q.quote_no
         FROM part_find_requests pfr
         INNER JOIN users u ON pfr.user_id = u.id
-        INNER JOIN user_address loc ON pfr.user_id = loc.user_id
+        INNER JOIN user_addresses loc ON pfr.user_id = loc.user_id
         INNER JOIN city ct ON loc.city = ct.id
         INNER JOIN region rg ON ct.region_id = rg.id
         INNER JOIN country co ON rg.country_id = co.id

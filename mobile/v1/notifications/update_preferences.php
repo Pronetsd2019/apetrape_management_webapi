@@ -58,6 +58,7 @@ if (!$user_id) {
 
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
+$input = $input ?? [];
 
 // Define allowed preference fields with defaults
 $allowed_fields = [
@@ -95,12 +96,38 @@ foreach ($allowed_fields as $field => $default) {
     }
 }
 
-if (empty($updates)) {
+// Optional FCM params: when provided and non-empty, add/update or remove device for push
+$fcm_token_raw = isset($input['fcm_token']) ? trim((string)$input['fcm_token']) : '';
+$fcm_token = $fcm_token_raw !== '' ? $fcm_token_raw : null;
+$device_id = (isset($input['device_id']) && trim((string)$input['device_id']) !== '')
+    ? trim((string)$input['device_id'])
+    : null;
+
+$platform = null;
+if (isset($input['platform']) && trim((string)$input['platform']) !== '') {
+    $platformInput = strtolower(trim((string)$input['platform']));
+    $allowedPlatforms = ['android', 'ios', 'web'];
+    if (!in_array($platformInput, $allowedPlatforms)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Invalid platform. Must be one of: android, ios, web.'
+        ]);
+        exit;
+    }
+    $platform = $platformInput;
+}
+
+$fcm_add_update = $fcm_token !== null;
+$fcm_remove = !$fcm_add_update && $device_id !== null;
+
+if (empty($updates) && !$fcm_add_update && !$fcm_remove) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
         'error' => 'Validation failed',
-        'message' => 'At least one preference field is required for update.'
+        'message' => 'At least one preference field or fcm_token/device_id is required for update.'
     ]);
     exit;
 }
@@ -131,54 +158,115 @@ try {
         exit;
     }
 
-    // Check if preferences exist
-    $stmt = $pdo->prepare("SELECT id FROM user_notification_preferences WHERE user_id = ?");
-    $stmt->execute([$user_id]);
-    $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+    $pdo->beginTransaction();
 
-    // Add updated_at to values
-    $values[] = date('Y-m-d H:i:s');
-    $values[] = $user_id;
+    $result = true;
+    if (!empty($updates)) {
+        // Check if preferences exist
+        $stmt = $pdo->prepare("SELECT id FROM user_notification_preferences WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        $existing = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if ($existing) {
-        // Update existing preferences
-        $sql = "UPDATE user_notification_preferences SET " . implode(', ', $set_clauses) . ", updated_at = ? WHERE user_id = ?";
-        $stmt = $pdo->prepare($sql);
-        $result = $stmt->execute($values);
-    } else {
-        // Insert new preferences with defaults for fields not provided
-        $insert_fields = array_keys($updates);
-        $insert_fields[] = 'user_id';
-        $insert_fields[] = 'updated_at';
-        
-        $insert_values = array_values($updates);
-        $insert_values[] = $user_id;
-        $insert_values[] = date('Y-m-d H:i:s');
-        
-        // Add defaults for fields not provided
-        foreach ($allowed_fields as $field => $default) {
-            if (!isset($updates[$field])) {
-                $insert_fields[] = $field;
-                $insert_values[] = $default;
+        // Add updated_at to values
+        $values[] = date('Y-m-d H:i:s');
+        $values[] = $user_id;
+
+        if ($existing) {
+            // Update existing preferences
+            $sql = "UPDATE user_notification_preferences SET " . implode(', ', $set_clauses) . ", updated_at = ? WHERE user_id = ?";
+            $stmt = $pdo->prepare($sql);
+            $result = $stmt->execute($values);
+        } else {
+            // Insert new preferences with defaults for fields not provided
+            $insert_fields = array_keys($updates);
+            $insert_fields[] = 'user_id';
+            $insert_fields[] = 'updated_at';
+
+            $insert_values = array_values($updates);
+            $insert_values[] = $user_id;
+            $insert_values[] = date('Y-m-d H:i:s');
+
+            // Add defaults for fields not provided
+            foreach ($allowed_fields as $field => $default) {
+                if (!isset($updates[$field])) {
+                    $insert_fields[] = $field;
+                    $insert_values[] = $default;
+                }
             }
+
+            $placeholders = implode(', ', array_fill(0, count($insert_fields), '?'));
+            $sql = "INSERT INTO user_notification_preferences (" . implode(', ', $insert_fields) . ") VALUES ({$placeholders})";
+            $stmt = $pdo->prepare($sql);
+            $result = $stmt->execute($insert_values);
         }
-        
-        $placeholders = implode(', ', array_fill(0, count($insert_fields), '?'));
-        $sql = "INSERT INTO user_notification_preferences (" . implode(', ', $insert_fields) . ") VALUES ({$placeholders})";
-        $stmt = $pdo->prepare($sql);
-        $result = $stmt->execute($insert_values);
+
+        if (!$result) {
+            $pdo->rollBack();
+            http_response_code(500);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Server error',
+                'message' => 'Failed to update notification preferences. Please try again later.',
+                'error_details' => 'Failed to update preferences.'
+            ]);
+            exit;
+        }
     }
 
-    if (!$result) {
-        http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'error' => 'Server error',
-            'message' => 'Failed to update notification preferences. Please try again later.',
-            'error_details' => 'Failed to update preferences.'
-        ]);
-        exit;
+    if ($fcm_add_update) {
+        if ($device_id === null) {
+            $checkStmt = $pdo->prepare("
+                SELECT id, fcm_token, platform
+                FROM user_fcm_tokens
+                WHERE user_id = ? AND device_id IS NULL
+                LIMIT 1
+            ");
+            $checkStmt->execute([$user_id]);
+        } else {
+            $checkStmt = $pdo->prepare("
+                SELECT id, fcm_token, platform
+                FROM user_fcm_tokens
+                WHERE user_id = ? AND device_id = ?
+                LIMIT 1
+            ");
+            $checkStmt->execute([$user_id, $device_id]);
+        }
+        $existingRow = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($existingRow) {
+            $updateStmt = $pdo->prepare("
+                UPDATE user_fcm_tokens
+                SET fcm_token = ?, platform = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+            $updateStmt->execute([$fcm_token, $platform, $existingRow['id']]);
+        } else {
+            $tokenCheckStmt = $pdo->prepare("
+                SELECT id FROM user_fcm_tokens WHERE fcm_token = ? LIMIT 1
+            ");
+            $tokenCheckStmt->execute([$fcm_token]);
+            $existingToken = $tokenCheckStmt->fetch(PDO::FETCH_ASSOC);
+            if ($existingToken) {
+                $deleteStmt = $pdo->prepare("DELETE FROM user_fcm_tokens WHERE id = ?");
+                $deleteStmt->execute([$existingToken['id']]);
+            }
+            $insertStmt = $pdo->prepare("
+                INSERT INTO user_fcm_tokens (user_id, fcm_token, device_id, platform, updated_at)
+                VALUES (?, ?, ?, ?, NOW())
+            ");
+            $insertStmt->execute([$user_id, $fcm_token, $device_id, $platform]);
+        }
+    } elseif ($fcm_remove) {
+        if ($device_id === null) {
+            $delStmt = $pdo->prepare("DELETE FROM user_fcm_tokens WHERE user_id = ? AND device_id IS NULL");
+            $delStmt->execute([$user_id]);
+        } else {
+            $delStmt = $pdo->prepare("DELETE FROM user_fcm_tokens WHERE user_id = ? AND device_id = ?");
+            $delStmt->execute([$user_id, $device_id]);
+        }
     }
+
+    $pdo->commit();
 
     // Fetch updated preferences
     $stmt = $pdo->prepare("
@@ -195,6 +283,16 @@ try {
     ");
     $stmt->execute([$user_id]);
     $preferences = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$preferences) {
+        $preferences = [
+            'push_notifications' => 1,
+            'email_notifications' => 0,
+            'sms_notifications' => 0,
+            'promotions' => 1,
+            'security' => 1,
+            'general' => 1
+        ];
+    }
 
     // Log the update
     logError('mobile_notifications_update_preferences', 'User notification preferences updated', [
@@ -218,8 +316,11 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     logException('mobile_notifications_update_preferences', $e);
-    
+
     http_response_code(500);
     echo json_encode([
         'success' => false,
@@ -228,8 +329,11 @@ try {
         'error_details' => 'Error updating notification preferences: ' . $e->getMessage()
     ]);
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     logException('mobile_notifications_update_preferences', $e);
-    
+
     http_response_code(500);
     echo json_encode([
         'success' => false,

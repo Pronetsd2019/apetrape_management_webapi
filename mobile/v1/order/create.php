@@ -26,8 +26,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Body: {
  *   "delivery_method": "pickup|delivery",
  *   "delivery_address": "Address string (if delivery)",
- *   "pickup_address": "Address string (if pickup)",
- *   "pay_method": "cash|card|bank_transfer"
+ *   "pickup_point_id": 2 (integer - if pickup),
+ *   "pay_method": "cash|card|bank_transfer",
+ *   "cost_map_id": 4 (optional - from delivery_cost_map),
+ *   "delivery_fee_id": null (optional - if null and cost_map_id provided, inserts into delivery_fee)
  * }
  * Requires JWT authentication - creates order from user's cart items
  */
@@ -35,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
 require_once __DIR__ . '/../util/auth_middleware.php';
+require_once __DIR__ . '/../util/order_tracker.php';
 
 // Ensure the request is authenticated
 $authUser = requireMobileJwtAuth();
@@ -71,8 +74,10 @@ if (json_last_error() !== JSON_ERROR_NONE) {
 // Validate required fields
 $delivery_method = $input['delivery_method'] ?? null;
 $delivery_address = $input['delivery_address'] ?? null;
-$pickup_address = $input['pickup_address'] ?? null;
+$pickup_point_id = isset($input['pickup_point_id']) && is_numeric($input['pickup_point_id']) ? (int)$input['pickup_point_id'] : null;
 $pay_method = $input['pay_method'] ?? null;
+$cost_map_id = isset($input['cost_map_id']) && is_numeric($input['cost_map_id']) ? (int)$input['cost_map_id'] : null;
+$delivery_fee_id = isset($input['delivery_fee_id']) && is_numeric($input['delivery_fee_id']) ? (int)$input['delivery_fee_id'] : null;
 
 $errors = [];
 
@@ -90,8 +95,8 @@ if ($delivery_method === 'delivery' && !$delivery_address) {
     $errors[] = 'delivery_address is required when delivery_method is "delivery"';
 }
 
-if ($delivery_method === 'pickup' && !$pickup_address) {
-    $errors[] = 'pickup_address is required when delivery_method is "pickup"';
+if ($delivery_method === 'pickup' && !$pickup_point_id) {
+    $errors[] = 'pickup_point_id is required when delivery_method is "pickup"';
 }
 
 if (!empty($errors)) {
@@ -150,7 +155,7 @@ try {
     $orderStmt = $pdo->prepare("
         INSERT INTO orders (
             user_id, status, created_at, updated_at, order_no,
-            pay_method, pay_status, delivery_method, delivery_address, pickup_address
+            pay_method, pay_status, delivery_method, delivery_address, pickup_point
         ) VALUES (?, 'pending', NOW(), NOW(), ?, ?, 'pending', ?, ?, ?)
     ");
 
@@ -160,10 +165,13 @@ try {
         $pay_method,
         $delivery_method,
         $delivery_address,
-        $pickup_address
+        $pickup_point_id
     ]);
 
     $order_id = $pdo->lastInsertId();
+
+    // Track order creation
+    trackOrderAction($pdo, $order_id, 'Order created');
 
     // Insert order items
     $itemStmt = $pdo->prepare("
@@ -186,6 +194,55 @@ try {
         ]);
     }
 
+    // Handle delivery fee insertion if delivery_fee_id is null but cost_map_id is provided
+    if ($delivery_fee_id === null && $cost_map_id !== null) {
+        // Fetch the fee amount from delivery_cost_map
+        $costMapStmt = $pdo->prepare("
+            SELECT amount
+            FROM delivery_cost_map
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $costMapStmt->execute([$cost_map_id]);
+        $costMapRow = $costMapStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($costMapRow) {
+            $fee_amount = (float)$costMapRow['amount'];
+
+            // Insert into delivery_fee table
+            $deliveryFeeStmt = $pdo->prepare("
+                INSERT INTO delivery_fee (cost_map_id, fee, order_id, created_at, updated_at)
+                VALUES (?, ?, ?, NOW(), NOW())
+            ");
+            $deliveryFeeStmt->execute([$cost_map_id, $fee_amount, $order_id]);
+            $delivery_fee_id = $pdo->lastInsertId();
+        }
+    }
+
+    // Handle pickup fee insertion if order is pickup
+    if ($delivery_method === 'pickup' && $pickup_point_id !== null) {
+        // Fetch the fee from pickup_points table
+        $pickupPointStmt = $pdo->prepare("
+            SELECT fee
+            FROM pickup_points
+            WHERE id = ? AND status = 1
+            LIMIT 1
+        ");
+        $pickupPointStmt->execute([$pickup_point_id]);
+        $pickupPointRow = $pickupPointStmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($pickupPointRow) {
+            $pickup_fee = (float)$pickupPointRow['fee'];
+
+            // Insert into pickup_order_fees table
+            $pickupFeeStmt = $pdo->prepare("
+                INSERT INTO pickup_order_fees (pickup_id, order_id, fee, create_At)
+                VALUES (?, ?, ?, NOW())
+            ");
+            $pickupFeeStmt->execute([$pickup_point_id, $order_id, $pickup_fee]);
+        }
+    }
+
     // Clear user's cart
     $clearCartStmt = $pdo->prepare("DELETE FROM cart WHERE user_id = ?");
     $clearCartStmt->execute([$user_id]);
@@ -199,7 +256,7 @@ try {
         SELECT
             o.id, o.user_id, o.status, o.created_at, o.updated_at, o.order_no,
             o.confirm_date, o.pay_method, o.pay_status, o.delivery_method,
-            o.delivery_address, o.pickup_address, o.delivery_date
+            o.delivery_address, o.pickup_point, o.delivery_date
         FROM orders o
         WHERE o.id = ?
     ");
@@ -257,9 +314,57 @@ try {
     }
     unset($item);
 
+    // Fetch delivery fee if exists
+    $deliveryFeeStmt = $pdo->prepare("
+        SELECT id, cost_map_id, fee, order_id, created_at, updated_at
+        FROM delivery_fee
+        WHERE order_id = ?
+        LIMIT 1
+    ");
+    $deliveryFeeStmt->execute([$order_id]);
+    $deliveryFeeRow = $deliveryFeeStmt->fetch(PDO::FETCH_ASSOC);
+
+    $deliveryFee = null;
+    $deliveryFeeAmount = 0;
+    if ($deliveryFeeRow) {
+        $deliveryFee = [
+            'id' => (int)$deliveryFeeRow['id'],
+            'cost_map_id' => (int)$deliveryFeeRow['cost_map_id'],
+            'fee' => (float)$deliveryFeeRow['fee'],
+            'order_id' => (int)$deliveryFeeRow['order_id'],
+            'created_at' => $deliveryFeeRow['created_at'],
+            'updated_at' => $deliveryFeeRow['updated_at']
+        ];
+        $deliveryFeeAmount = (float)$deliveryFeeRow['fee'];
+    }
+
+    // Fetch pickup fee if exists
+    $pickupFeeStmt = $pdo->prepare("
+        SELECT id, pickup_id, order_id, fee, create_At
+        FROM pickup_order_fees
+        WHERE order_id = ?
+        LIMIT 1
+    ");
+    $pickupFeeStmt->execute([$order_id]);
+    $pickupFeeRow = $pickupFeeStmt->fetch(PDO::FETCH_ASSOC);
+
+    $pickupFee = null;
+    $pickupFeeAmount = 0;
+    if ($pickupFeeRow) {
+        $pickupFee = [
+            'id' => (int)$pickupFeeRow['id'],
+            'pickup_id' => (int)$pickupFeeRow['pickup_id'],
+            'order_id' => (int)$pickupFeeRow['order_id'],
+            'fee' => (float)$pickupFeeRow['fee'],
+            'create_At' => $pickupFeeRow['create_At']
+        ];
+        $pickupFeeAmount = (float)$pickupFeeRow['fee'];
+    }
+
     // Calculate totals
     $total_quantity = array_sum(array_column($orderItems, 'quantity'));
-    $total_amount = array_sum(array_column($orderItems, 'total'));
+    $items_total = array_sum(array_column($orderItems, 'total'));
+    $total_amount = $items_total + $deliveryFeeAmount + $pickupFeeAmount;
 
     $formatted_order = [
         'id' => (int)$order['id'],
@@ -271,14 +376,19 @@ try {
         'pay_status' => $order['pay_status'],
         'delivery_method' => $order['delivery_method'],
         'delivery_address' => $order['delivery_address'],
-        'pickup_address' => $order['pickup_address'],
+        'pickup_point' => $order['pickup_point'] ? (int)$order['pickup_point'] : null,
         'delivery_date' => $order['delivery_date'],
         'created_at' => $order['created_at'],
         'updated_at' => $order['updated_at'],
         'order_items' => $orderItems,
+        'delivery_fee' => $deliveryFee,
+        'pickup_fee' => $pickupFee,
         'summary' => [
             'total_items' => count($orderItems),
             'total_quantity' => (int)$total_quantity,
+            'items_total' => round($items_total, 2),
+            'delivery_fee' => round($deliveryFeeAmount, 2),
+            'pickup_fee' => round($pickupFeeAmount, 2),
             'total_amount' => round($total_amount, 2)
         ]
     ];

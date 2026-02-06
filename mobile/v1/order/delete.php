@@ -30,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
 require_once __DIR__ . '/../util/auth_middleware.php';
+require_once __DIR__ . '/../util/order_tracker.php';
 
 // Ensure the request is authenticated
 $authUser = requireMobileJwtAuth();
@@ -99,6 +100,9 @@ try {
         WHERE id = ?
     ");
     $updateStmt->execute([$order_id]);
+
+    // Track order cancellation
+    trackOrderAction($pdo, $order_id, 'cancelled');
 
     http_response_code(200);
     echo json_encode([

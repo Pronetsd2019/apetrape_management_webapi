@@ -1,5 +1,10 @@
 <?php
 
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+
 // CORS headers for subdomain support and localhost
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
 $isLocalhostOrigin = isset($_SERVER['HTTP_ORIGIN']) && (
@@ -28,6 +33,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/jwt.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/otp_store.php';
+require_once __DIR__ . '/../../../control/util/email_sender.php';
+require_once __DIR__ . '/../../../control/util/sms_sender.php';
 
 header('Content-Type: application/json');
 
@@ -59,12 +67,38 @@ foreach ($requiredFields as $field) {
 }
 
 $name = trim($input['name']);
-$email = trim($input['email']);
+$identifier = trim($input['email']); // Frontend uses one field for email OR cell
 $password = $input['password'];
-$phone = isset($input['phone']) ? trim($input['phone']) : null;
+$phone = isset($input['phone']) ? trim($input['phone']) : null; // optional legacy support
+
+// If the frontend provided only one field, decide whether it's an email or a cellphone number
+$email = null;
+if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+    $email = $identifier;
+    // If phone wasn't sent separately, keep as null
+} else {
+    // Treat identifier as cellphone number
+    $phone = $identifier;
+}
 
 // Additional validation
-if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+if ($email === null) {
+    // Basic phone validation (allows + then 7-15 digits)
+    $normalizedPhone = preg_replace('/\s+/', '', (string)$phone);
+    if (!$normalizedPhone || !preg_match('/^\+?[0-9]{7,15}$/', $normalizedPhone)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Validation failed',
+            'message' => 'Invalid email or phone number format.',
+            'details' => [
+                'email' => ['Provide a valid email address or a valid cellphone number.']
+            ]
+        ]);
+        exit;
+    }
+    $phone = $normalizedPhone;
+} else if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
@@ -104,9 +138,14 @@ if (strlen($password) < 6) {
 }
 
 try {
-    // Check if user with same email already exists
-    $stmt = $pdo->prepare("SELECT id, email, status FROM users WHERE LOWER(email) = LOWER(?)");
-    $stmt->execute([$email]);
+    // Check if user with same identifier already exists (email OR phone)
+    if ($email !== null) {
+        $stmt = $pdo->prepare("SELECT id, email, cell, status FROM users WHERE LOWER(email) = LOWER(?)");
+        $stmt->execute([$email]);
+    } else {
+        $stmt = $pdo->prepare("SELECT id, email, cell, status FROM users WHERE cell = ?");
+        $stmt->execute([$phone]);
+    }
     $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Hash password
@@ -118,6 +157,7 @@ try {
             $stmt = $pdo->prepare("
                 UPDATE users 
                 SET name = ?, 
+                    email = ?,
                     cell = ?, 
                     password_hash = ?, 
                     status = 1,
@@ -127,17 +167,17 @@ try {
                     updated_at = NOW()
                 WHERE id = ?
             ");
-            $result = $stmt->execute([$name, $phone, $password_hash, $existingUser['id']]);
+            $result = $stmt->execute([$name, $email, $phone, $password_hash, $existingUser['id']]);
             $userId = $existingUser['id'];
         } else {
-            // User exists and is not deactivated - email already taken
+            // User exists and is not deactivated - identifier already taken
             http_response_code(400);
             echo json_encode([
                 'success' => false,
                 'error' => 'Validation failed',
-                'message' => 'Email already exists',
+                'message' => ($email !== null) ? 'Email already exists' : 'Phone number already exists',
                 'details' => [
-                    'email' => ['The email has already been taken.']
+                    'email' => [($email !== null) ? 'The email has already been taken.' : 'The phone number has already been taken.']
                 ]
             ]);
             exit;
@@ -146,9 +186,10 @@ try {
         // Insert new user (surname is NULL for mobile users)
         $stmt = $pdo->prepare("
             INSERT INTO users (name, surname, email, cell, password_hash, provider, status)
-            VALUES (?, NULL, ?, ?, ?, 'email', 1)
+            VALUES (?, NULL, ?, ?, ?, ?, 1)
         ");
-        $result = $stmt->execute([$name, $email, $phone, $password_hash]);
+        $provider = ($email !== null) ? 'email' : 'phone';
+        $result = $stmt->execute([$name, $email, $phone, $password_hash, $provider]);
         $userId = $pdo->lastInsertId();
     }
 
@@ -190,18 +231,43 @@ try {
     $token_payload = [
         'sub' => (int) $user['id'],
         'user_id' => (int) $user['id'],
-        'email' => $user['email']
+        'email' => $user['email'] ?? ''
     ];
 
     $access_token = generateJWT($token_payload, 60); // 60 minutes = 3600 seconds
 
+    // OTP: create OTP row now, but do delivery after response flush
+    // This prevents email/SMS provider slowness from blocking the API response.
+    $otpSent = false; // delivery result (best-effort; may be attempted after response)
+    $otpChannel = ($email !== null) ? 'email' : 'sms';
+    $otpExpiresIn = 600; // seconds (10 minutes)
+    $otpId = null;
+    $otpCode = null;
+    $otpDestination = ($otpChannel === 'email') ? (string)$email : (string)$phone;
+    try {
+        if (!empty($otpDestination)) {
+            $otpRow = createRegistrationOtp($pdo, (int)$user['id'], $otpChannel, $otpDestination);
+            $otpId = (int)($otpRow['otp_id'] ?? 0);
+            $otpCode = (string)($otpRow['otp_code'] ?? '');
+        }
+    } catch (Throwable $e) {
+        logException('mobile_auth_register_otp_create', $e, [
+            'user_id' => (int)$user['id'],
+            'channel' => $otpChannel
+        ]);
+    }
+
     // Return response matching Flutter expectations
     http_response_code(200);
-    echo json_encode([
+    $responsePayload = [
         'access_token' => $access_token,
         'refresh_token' => $refresh_token,
         'token_type' => 'Bearer',
         'expires_in' => 3600,
+        'otp_sent' => $otpSent,
+        'otp_channel' => $otpChannel,
+        'otp_expires_in' => $otpExpiresIn,
+        'otp_id' => $otpId,
         'user' => [
             'id' => (string)$user['id'],
             'name' => $user['name'],
@@ -211,7 +277,43 @@ try {
             'created_at' => $user['created_at'],
             'updated_at' => $user['updated_at']
         ]
-    ]);
+    ];
+    echo json_encode($responsePayload);
+
+    // Flush response early (if supported), then attempt OTP delivery in background.
+    if (function_exists('fastcgi_finish_request')) {
+        @fastcgi_finish_request();
+    } else {
+        @ob_flush();
+        @flush();
+    }
+
+    // Best-effort OTP delivery (does not affect the already-sent response)
+    try {
+        if (!empty($otpDestination) && !empty($otpCode)) {
+            if ($otpChannel === 'email') {
+                logError('mobile_auth_register_otp_send', 'Sending OTP email', ['to' => $otpDestination, 'otp_id' => $otpId]);
+                sendOtpEmail($otpDestination, (string)$user['name'], $otpCode, [
+                    'user_id' => (int)$user['id'],
+                    'otp_id' => $otpId,
+                    'channel' => 'email'
+                ]);
+            } else {
+                logError('mobile_auth_register_otp_send', 'Sending OTP sms', ['to' => $otpDestination, 'otp_id' => $otpId]);
+                sendOtpSms($otpDestination, $otpCode, [
+                    'user_id' => (int)$user['id'],
+                    'otp_id' => $otpId,
+                    'channel' => 'sms'
+                ]);
+            }
+        }
+    } catch (Throwable $e) {
+        logException('mobile_auth_register_otp_send', $e, [
+            'user_id' => (int)$user['id'],
+            'channel' => $otpChannel,
+            'otp_id' => $otpId
+        ]);
+    }
 
 } catch (PDOException $e) {
     logException('mobile_auth_register', $e);

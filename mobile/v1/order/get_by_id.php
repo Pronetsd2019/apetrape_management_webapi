@@ -77,9 +77,16 @@ try {
             o.pay_status,
             o.delivery_method,
             o.delivery_address,
-            o.pickup_address,
-            o.delivery_date
+            o.pickup_point,
+            o.delivery_date,
+            pp.id AS pickup_point_id,
+            pp.name AS pickup_point_name,
+            pp.address AS pickup_point_address,
+            pp.entry AS pickup_point_entry,
+            pp.status AS pickup_point_status,
+            pp.fee AS pickup_point_fee
         FROM orders o
+        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
         WHERE o.id = ? AND o.user_id = ? AND o.status != 'deleted'
     ");
     $orderStmt->execute([$order_id, $user_id]);
@@ -210,6 +217,19 @@ try {
     $total_paid = array_sum(array_column($payments, 'amount'));
     $due_amount = max(0, round($total_amount, 2) - round($total_paid, 2));
 
+    // Format pickup point details if available
+    $pickup_point_data = null;
+    if ($order['pickup_point']) {
+        $pickup_point_data = [
+            'id' => (int)$order['pickup_point_id'],
+            'name' => $order['pickup_point_name'],
+            'address' => $order['pickup_point_address'],
+            'entry' => $order['pickup_point_entry'],
+            'status' => $order['pickup_point_status'],
+            'fee' => $order['pickup_point_fee'] ? round((float)$order['pickup_point_fee'], 2) : null
+        ];
+    }
+
     // Format the complete order response
     $formatted_order = [
         'id' => (int)$order['id'],
@@ -221,7 +241,7 @@ try {
         'pay_status' => $order['pay_status'],
         'delivery_method' => $order['delivery_method'],
         'delivery_address' => $order['delivery_address'],
-        'pickup_address' => $order['pickup_address'],
+        'pickup_point' => $pickup_point_data,
         'delivery_date' => $order['delivery_date'],
         'created_at' => $order['created_at'],
         'updated_at' => $order['updated_at'],
