@@ -7,34 +7,35 @@
 // Set timezone for consistent datetime handling
 require_once __DIR__ . '/timezone_config.php';
 
-// Load .env: dev = project root; prod = parent of project root (same folder as apetrape_management_webapi)
-$projectRoot = dirname(dirname(__DIR__));
-$loadEnv = function ($envPath, $overwrite) {
-    if (!is_file($envPath)) {
-        return;
-    }
-    $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+// Load .env file if it exists
+$envFile = dirname(dirname(__DIR__)) . '/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     foreach ($lines as $line) {
-        $line = trim($line);
-        if ($line === '' || strpos($line, '#') === 0) {
+        // Skip comments
+        if (strpos(trim($line), '#') === 0) {
             continue;
         }
+        
+        // Parse KEY=VALUE format
         if (strpos($line, '=') !== false) {
             list($key, $value) = explode('=', $line, 2);
             $key = trim($key);
             $value = trim($value);
+            
+            // Remove quotes if present
             if ((substr($value, 0, 1) === '"' && substr($value, -1) === '"') ||
                 (substr($value, 0, 1) === "'" && substr($value, -1) === "'")) {
                 $value = substr($value, 1, -1);
             }
-            if ($overwrite || !isset($_ENV[$key])) {
+            
+            // Set environment variable if not already set
+            if (!isset($_ENV[$key])) {
                 $_ENV[$key] = $value;
             }
         }
     }
-};
-$loadEnv($projectRoot . '/.env', false);           // dev: inside project
-$loadEnv(dirname($projectRoot) . '/.env', true);   // prod: same folder as project root
+}
 
 // Database configuration - loaded from environment variables
 $db_host = $_ENV['DB_HOST'] ?? 'localhost';
