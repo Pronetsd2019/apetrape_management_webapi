@@ -1,13 +1,13 @@
 <?php
 /**
- * Log token operations (e.g. refresh) to logs/tokens.
- * Project root is assumed to be control/../..
- * - logTokenEvent: all events → year/month/day/refresh.log
- * - logFailedToken: failures only → year/month/day/failed.log
+ * Log token operations (e.g. refresh) to control/logs/tokens.
+ * Same base as rest of control logs (control/util → control/logs).
+ * - logTokenEvent: all events → control/logs/tokens/year/month/day/refresh.log
+ * - logFailedToken: failures only → control/logs/tokens/year/month/day/failed.log
  */
 
 function _tokenLogDir() {
-    $base = dirname(__DIR__, 2) . '/logs/tokens';
+    $base = dirname(__DIR__) . '/logs/tokens';
     return $base . '/' . date('Y') . '/' . date('m') . '/' . date('d');
 }
 

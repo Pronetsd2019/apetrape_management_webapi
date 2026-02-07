@@ -183,19 +183,21 @@ try {
     // Calculate remaining refresh token TTL
     $refresh_token_ttl = max(0, (int)$cookie_expiry - time());
 
-    logTokenEvent('refresh', true, 'Token refreshed', [
-        'user_id' => (int)$user['id']
-    ]);
-
-    // Return new access token and refresh token
-    http_response_code(200);
-    echo json_encode([
+    $response = [
         'access_token' => $access_token,
         'refresh_token' => $cookie_token,
         'token_type' => 'Bearer',
         'expires_in' => 3600,
         'refresh_expires_in' => $refresh_token_ttl
+    ];
+
+    logTokenEvent('refresh', true, 'Token refreshed', [
+        'user_id' => (int)$user['id'],
+        'response' => $response
     ]);
+
+    http_response_code(200);
+    echo json_encode($response);
 
 } catch (PDOException $e) {
     logException('mobile_auth_refresh', $e);
