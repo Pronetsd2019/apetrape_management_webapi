@@ -149,15 +149,18 @@ try {
                         $user['provider_user_id'] = $provider_user_id;
                     }
                 } else {
-                    // User exists but is NOT a social login user (email/password user)
-                    // Tell them to use email/password login
-                    http_response_code(400);
-                    echo json_encode([
-                        'success' => false,
-                        'error' => 'Account exists',
-                        'message' => 'An account with this email already exists. Please use email and password to login.'
-                    ]);
-                    exit;
+                    // User exists with email/password; allow social login (link provider to existing account)
+                    $user = $existingUser;
+                    $stmt = $pdo->prepare("
+                        UPDATE users
+                        SET provider = ?, provider_user_id = ?, updated_at = NOW()
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$provider, $provider_user_id, $existingUser['id']]);
+                    $user['provider'] = $provider;
+                    $user['provider_user_id'] = $provider_user_id;
+                    if ($avatar) $user['avatar'] = $avatar;
+                    if ($name) $user['name'] = $name;
                 }
             }
         }
@@ -209,16 +212,17 @@ try {
             $user['name'] = $name;
         }
 
-        // Check if user account is active
-        if ($user['status'] != 1) {
-            http_response_code(403);
-            echo json_encode([
-                'success' => false,
-                'error' => 'Account inactive',
-                'message' => 'Your account has been deactivated. Please contact support.'
-            ]);
-            exit;
-        }
+    }
+
+    // Check if user account is active (applies to all: found by provider, linked email, or new)
+    if ((int)($user['status'] ?? 0) != 1) {
+        http_response_code(403);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Account inactive',
+            'message' => 'Your account has been deactivated. Please contact support.'
+        ]);
+        exit;
     }
 
     // Generate refresh token
