@@ -93,21 +93,27 @@ try {
         exit;
     }
 
-    // Check if address exists and belongs to this user
+    // Check if address exists and belongs to this user (same columns as get.php)
     $stmt = $pdo->prepare("
         SELECT 
-            ua.id,
-            ua.user_id,
-            ua.street,
-            ua.plot,
-            c.name AS city_name,
-            r.name AS region_name,
-            co.name AS country_name
-        FROM user_addresses ua
-        INNER JOIN city c ON ua.city = c.id
-        INNER JOIN region r ON c.region_id = r.id
-        INNER JOIN country co ON r.country_id = co.id
-        WHERE ua.id = ? AND ua.user_id = ?
+            id,
+            place_id,
+            formatted_address,
+            latitude,
+            longitude,
+            street_number,
+            street,
+            sublocality,
+            city,
+            district,
+            region,
+            country,
+            country_code,
+            postal_code,
+            created_at,
+            updated_at
+        FROM user_addresses
+        WHERE id = ? AND user_id = ?
     ");
     $stmt->execute([$address_id, $user_id]);
     $address = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -141,7 +147,7 @@ try {
     logError('mobile_address_delete', 'User address deleted', [
         'user_id' => $user_id,
         'address_id' => $address_id,
-        'address' => $address['street'] . ', ' . $address['plot'] . ', ' . $address['city_name'],
+        'formatted_address' => $address['formatted_address'] ?? null,
         'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
     ]);
 
@@ -151,11 +157,23 @@ try {
         'message' => 'Address deleted successfully.',
         'data' => [
             'id' => (int)$address['id'],
-            'street' => $address['street'],
-            'plot' => $address['plot'],
-            'city' => $address['city_name'],
-            'region' => $address['region_name'],
-            'country' => $address['country_name']
+            'place_id' => $address['place_id'],
+            'formatted_address' => $address['formatted_address'],
+            'latitude' => (float)$address['latitude'],
+            'longitude' => (float)$address['longitude'],
+            'address_components' => [
+                'street_number' => $address['street_number'],
+                'street' => $address['street'],
+                'city' => $address['city'],
+                'sublocality' => $address['sublocality'],
+                'district' => $address['district'],
+                'region' => $address['region'],
+                'country' => $address['country'],
+                'country_code' => $address['country_code'],
+                'postal_code' => $address['postal_code']
+            ],
+            'created_at' => $address['created_at'],
+            'updated_at' => $address['updated_at']
         ]
     ]);
 
