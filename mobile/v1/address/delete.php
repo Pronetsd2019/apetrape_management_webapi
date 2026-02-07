@@ -103,7 +103,7 @@ try {
             c.name AS city_name,
             r.name AS region_name,
             co.name AS country_name
-        FROM user_address ua
+        FROM user_addresses ua
         INNER JOIN city c ON ua.city = c.id
         INNER JOIN region r ON c.region_id = r.id
         INNER JOIN country co ON r.country_id = co.id
@@ -123,7 +123,7 @@ try {
     }
 
     // Delete the address
-    $stmt = $pdo->prepare("DELETE FROM user_address WHERE id = ? AND user_id = ?");
+    $stmt = $pdo->prepare("DELETE FROM user_addresses WHERE id = ? AND user_id = ?");
     $result = $stmt->execute([$address_id, $user_id]);
 
     if (!$result || $stmt->rowCount() === 0) {
