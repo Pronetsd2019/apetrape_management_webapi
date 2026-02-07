@@ -108,8 +108,8 @@ try {
         exit;
     }
 
-    // Get user details
-    $stmt = $pdo->prepare("SELECT id, email FROM users WHERE id = ?");
+    // Get user details (same fields as login for response)
+    $stmt = $pdo->prepare("SELECT id, name, surname, email, cell, avatar, activated, created_at, updated_at FROM users WHERE id = ?");
     $stmt->execute([$token_data['user_id']]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -188,7 +188,17 @@ try {
         'refresh_token' => $cookie_token,
         'token_type' => 'Bearer',
         'expires_in' => 3600,
-        'refresh_expires_in' => $refresh_token_ttl
+        'refresh_expires_in' => $refresh_token_ttl,
+        'user' => [
+            'id' => (string)$user['id'],
+            'name' => $user['name'],
+            'email' => $user['email'],
+            'phone' => $user['cell'],
+            'avatar' => $user['avatar'],
+            'activated' => (bool)((int)($user['activated'] ?? 0)),
+            'created_at' => $user['created_at'],
+            'updated_at' => $user['updated_at']
+        ]
     ];
 
     logTokenEvent('refresh', true, 'Token refreshed', [
