@@ -10,6 +10,7 @@ require_once __DIR__ . '/../../../control/util/timezone_config.php';
  */
 
 require_once __DIR__ . '/../../../control/util/jwt.php';
+require_once __DIR__ . '/../../../control/util/error_logger.php';
 
 /**
  * Extract Authorization header value from request.
@@ -51,6 +52,10 @@ function requireMobileJwtAuth()
     $authHeader = getAuthorizationHeader();
 
     if (!$authHeader) {
+        logError('mobile_auth_middleware', 'Token failed: no Authorization header', [
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? null
+        ]);
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode([
@@ -62,6 +67,11 @@ function requireMobileJwtAuth()
     }
 
     if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+        logError('mobile_auth_middleware', 'Token failed: invalid Authorization header format (expected "Bearer <token>")', [
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? null,
+            'header_prefix' => substr($authHeader, 0, 20)
+        ]);
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode([
@@ -75,6 +85,10 @@ function requireMobileJwtAuth()
     $token = trim($matches[1]);
 
     if (empty($token)) {
+        logError('mobile_auth_middleware', 'Token failed: JWT token is empty after Bearer prefix', [
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? null
+        ]);
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode([
@@ -88,6 +102,11 @@ function requireMobileJwtAuth()
     $payload = validateJWT($token);
 
     if ($payload === false) {
+        logError('mobile_auth_middleware', 'Token failed: invalid or expired JWT (signature invalid, expired, or malformed)', [
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? null,
+            'token_length' => strlen($token)
+        ]);
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode([
@@ -100,6 +119,11 @@ function requireMobileJwtAuth()
 
     // Validate that payload contains user_id (mobile user token)
     if (!isset($payload['user_id'])) {
+        logError('mobile_auth_middleware', 'Token failed: payload missing user_id (not a mobile user token)', [
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? null,
+            'payload_keys' => array_keys($payload)
+        ]);
         http_response_code(401);
         header('Content-Type: application/json');
         echo json_encode([

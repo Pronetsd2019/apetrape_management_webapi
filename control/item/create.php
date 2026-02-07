@@ -255,7 +255,7 @@ try {
         $totalImages = count($names);
 
         if ($totalImages > 0) {
-            $uploadDir = dirname(__DIR__, 2) . '/uploads/items';
+            $uploadDir = dirname(dirname(__DIR__, 2)) . '/uploads/items';
             if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
                 throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
             }

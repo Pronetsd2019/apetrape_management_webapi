@@ -181,7 +181,7 @@ try {
         }
         
         // Create upload directory if it doesn't exist
-        $uploadDir = dirname(__DIR__, 2) . '/uploads/category';
+        $uploadDir = dirname(dirname(__DIR__, 2)) . '/uploads/category';
         if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
             throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
         }
@@ -217,10 +217,10 @@ try {
     
     // If we used a temporary filename, rename it with category_id
     if ($img && strpos($img, 'uploads/category/category_') === 0) {
-        $oldPath = dirname(__DIR__, 2) . '/' . $img;
+        $oldPath = dirname(dirname(__DIR__, 2)) . '/' . $img;
         $extension = pathinfo($img, PATHINFO_EXTENSION);
         $newName = 'category_' . $category_id . '_' . uniqid('', true) . ($extension ? '.' . $extension : '');
-        $newPath = dirname(__DIR__, 2) . '/uploads/category/' . $newName;
+        $newPath = dirname(dirname(__DIR__, 2)) . '/uploads/category/' . $newName;
         
         if (file_exists($oldPath) && rename($oldPath, $newPath)) {
             $img = 'uploads/category/' . $newName;

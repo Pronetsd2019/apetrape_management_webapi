@@ -128,7 +128,7 @@ try {
         }
         
         // Create upload directory if it doesn't exist
-        $uploadDir = dirname(__DIR__, 2) . '/uploads/brands';
+        $uploadDir = dirname(dirname(__DIR__, 2)) . '/uploads/brands';
         if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
             throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
         }
@@ -168,10 +168,10 @@ try {
     
     // If we used a temporary filename, rename it with manufacturer_id
     if ($img && strpos($img, 'uploads/brands/brand_') === 0) {
-        $oldPath = dirname(__DIR__, 2) . '/' . $img;
+        $oldPath = dirname(dirname(__DIR__, 2)) . '/' . $img;
         $extension = pathinfo($img, PATHINFO_EXTENSION);
         $newName = 'brand_' . $manufacturer_id . '_' . uniqid('', true) . ($extension ? '.' . $extension : '');
-        $newPath = dirname(__DIR__, 2) . '/uploads/brands/' . $newName;
+        $newPath = dirname(dirname(__DIR__, 2)) . '/uploads/brands/' . $newName;
         
         if (file_exists($oldPath) && rename($oldPath, $newPath)) {
             $img = 'uploads/brands/' . $newName;

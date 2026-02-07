@@ -260,7 +260,7 @@ try {
                     $stmt->execute(array_merge([$item_id], $deleteIds));
 
                     foreach ($imagesToDelete as $img) {
-                        $filePath = dirname(__DIR__, 2) . '/' . $img['src'];
+                        $filePath = dirname(dirname(__DIR__, 2)) . '/' . $img['src'];
                         if (is_file($filePath)) {
                             unlink($filePath);
                         }
@@ -276,7 +276,7 @@ try {
         $totalImages = count($names);
 
         if ($totalImages > 0) {
-            $uploadDir = dirname(__DIR__, 2) . '/uploads/items';
+            $uploadDir = dirname(dirname(__DIR__, 2)) . '/uploads/items';
             if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
                 throw new RuntimeException('Failed to create uploads directory: ' . $uploadDir);
             }

@@ -270,6 +270,7 @@ try {
         'otp_id' => $otpId,
         'user' => [
             'id' => (string)$user['id'],
+            'user_id' => (string)$user['id'],
             'name' => $user['name'],
             'email' => $user['email'],
             'phone' => $user['cell'],
