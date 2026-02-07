@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/jwt.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/token_logger.php';
 
 header('Content-Type: application/json');
 
@@ -45,6 +46,7 @@ $input = json_decode(file_get_contents('php://input'), true);
 $refresh_token = isset($input['refresh_token']) ? trim($input['refresh_token']) : null;
 
 if (!$refresh_token) {
+    logFailedToken('refresh', 'Refresh token not found', []);
     http_response_code(401);
     echo json_encode([
         'success' => false,
@@ -70,7 +72,10 @@ try {
             'token_preview' => substr($refresh_token, 0, 10) . '...',
             'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
         ]);
-        
+        logFailedToken('refresh', 'Invalid or expired refresh token', [
+            'token_preview' => substr($refresh_token, 0, 10) . '...'
+        ]);
+
         http_response_code(401);
         echo json_encode([
             'success' => false,
@@ -90,7 +95,10 @@ try {
             'user_id' => $token_data['user_id'],
             'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
         ]);
-        
+        logFailedToken('refresh', 'Token refresh for inactive account', [
+            'user_id' => $token_data['user_id']
+        ]);
+
         http_response_code(403);
         echo json_encode([
             'success' => false,
@@ -106,6 +114,9 @@ try {
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$user) {
+        logFailedToken('refresh', 'User not found after token validation', [
+            'user_id' => $token_data['user_id']
+        ]);
         http_response_code(404);
         echo json_encode([
             'success' => false,
@@ -152,6 +163,10 @@ try {
         $current = $stmtCurrent->fetch(PDO::FETCH_ASSOC);
 
         if (!$current || empty($current['token'])) {
+            logFailedToken('refresh', 'Current token missing after rotate', [
+                'token_id' => $token_data['id'],
+                'user_id' => $token_data['user_id']
+            ]);
             http_response_code(401);
             echo json_encode([
                 'success' => false,
@@ -180,7 +195,10 @@ try {
 
 } catch (PDOException $e) {
     logException('mobile_auth_refresh', $e);
-    
+    logFailedToken('refresh', 'PDO error: ' . $e->getMessage(), [
+        'exception' => $e->getMessage()
+    ]);
+
     http_response_code(500);
     echo json_encode([
         'success' => false,
@@ -190,7 +208,10 @@ try {
     ]);
 } catch (Exception $e) {
     logException('mobile_auth_refresh', $e);
-    
+    logFailedToken('refresh', 'Exception: ' . $e->getMessage(), [
+        'exception' => $e->getMessage()
+    ]);
+
     http_response_code(500);
     echo json_encode([
         'success' => false,

@@ -33,6 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/jwt.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/token_logger.php';
 require_once __DIR__ . '/../../../control/util/otp_store.php';
 require_once __DIR__ . '/../../../control/util/email_sender.php';
 require_once __DIR__ . '/../../../control/util/sms_sender.php';
@@ -216,25 +217,40 @@ try {
     $stmt->execute([$userId]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Generate refresh token
-    $refresh_token = generateRefreshToken();
-    $refresh_token_expiry = time() + (7 * 24 * 60 * 60); // 7 days
+    try {
+        // Generate refresh token
+        $refresh_token = generateRefreshToken();
+        $refresh_token_expiry = time() + (7 * 24 * 60 * 60); // 7 days
 
-    // Store refresh token in database
-    $stmt = $pdo->prepare("
-        INSERT INTO mobile_refresh_tokens (user_id, token, expires_at)
-        VALUES (?, ?, FROM_UNIXTIME(?))
-    ");
-    $stmt->execute([$userId, $refresh_token, $refresh_token_expiry]);
+        // Store refresh token in database
+        $stmt = $pdo->prepare("
+            INSERT INTO mobile_refresh_tokens (user_id, token, expires_at)
+            VALUES (?, ?, FROM_UNIXTIME(?))
+        ");
+        $stmt->execute([$userId, $refresh_token, $refresh_token_expiry]);
 
-    // Generate access token (JWT) - valid for 1 hour (3600 seconds) as per Flutter spec
-    $token_payload = [
-        'sub' => (int) $user['id'],
-        'user_id' => (int) $user['id'],
-        'email' => $user['email'] ?? ''
-    ];
+        // Generate access token (JWT) - valid for 1 hour (3600 seconds) as per Flutter spec
+        $token_payload = [
+            'sub' => (int) $user['id'],
+            'user_id' => (int) $user['id'],
+            'email' => $user['email'] ?? ''
+        ];
 
-    $access_token = generateJWT($token_payload, 60); // 60 minutes = 3600 seconds
+        $access_token = generateJWT($token_payload, 60); // 60 minutes = 3600 seconds
+    } catch (Throwable $e) {
+        logFailedToken('register', 'Token generation or storage failed: ' . $e->getMessage(), [
+            'user_id' => (int)$userId,
+            'exception' => $e->getMessage()
+        ]);
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Server error',
+            'message' => 'An error occurred during registration. Please try again later.',
+            'error_details' => 'Error creating tokens: ' . $e->getMessage()
+        ]);
+        exit;
+    }
 
     // OTP: create OTP row now, but do delivery after response flush
     // This prevents email/SMS provider slowness from blocking the API response.

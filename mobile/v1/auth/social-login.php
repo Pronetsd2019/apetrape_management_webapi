@@ -109,7 +109,7 @@ try {
     
     // Look up user by provider_user_id and provider
     $stmt = $pdo->prepare("
-        SELECT id, name, surname, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
+        SELECT id, name, surname, email, cell, avatar, provider, provider_user_id, status, activated, created_at, updated_at
         FROM users
         WHERE provider = ? AND provider_user_id = ?
     ");
@@ -123,7 +123,7 @@ try {
         // Check if user exists by email (if email is provided)
         if ($email) {
             $stmt = $pdo->prepare("
-                SELECT id, name, surname, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
+                SELECT id, name, surname, email, cell, avatar, provider, provider_user_id, status, activated, created_at, updated_at
                 FROM users
                 WHERE LOWER(email) = LOWER(?)
             ");
@@ -180,10 +180,10 @@ try {
                 exit;
             }
 
-            // Insert new user (surname is NULL for social login users)
+            // Insert new user (surname is NULL for social login users; activated = true for social sign-up)
             $stmt = $pdo->prepare("
-                INSERT INTO users (name, surname, email, cell, provider, provider_user_id, avatar, status)
-                VALUES (?, NULL, ?, ?, ?, ?, ?, 1)
+                INSERT INTO users (name, surname, email, cell, provider, provider_user_id, avatar, status, activated)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, 1, 1)
             ");
             $stmt->execute([$name, $email, null, $provider, $provider_user_id, $avatar]);
 
@@ -191,7 +191,7 @@ try {
 
             // Fetch the created user
             $stmt = $pdo->prepare("
-                SELECT id, name, email, cell, avatar, provider, provider_user_id, status, created_at, updated_at
+                SELECT id, name, email, cell, avatar, provider, provider_user_id, status, activated, created_at, updated_at
                 FROM users
                 WHERE id = ?
             ");
@@ -261,6 +261,7 @@ try {
             'email' => $user['email'],
             'phone' => $user['cell'],
             'avatar' => $user['avatar'],
+            'activated' => (bool)($user['activated'] ?? false),
             'created_at' => $user['created_at'],
             'updated_at' => $user['updated_at']
         ],

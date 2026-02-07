@@ -28,6 +28,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/jwt.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/otp_store.php';
+require_once __DIR__ . '/../../../control/util/email_sender.php';
+require_once __DIR__ . '/../../../control/util/sms_sender.php';
 
 header('Content-Type: application/json');
 
@@ -85,7 +88,7 @@ try {
     // Get user by email OR phone (email/password + phone/password users) - including lockout fields
     if ($email !== null) {
         $stmt = $pdo->prepare("
-            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, 
+            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, activated,
                    COALESCE(failed_attempts, 0) as failed_attempts,
                    locked_until,
                    COALESCE(lockout_stage, 0) as lockout_stage,
@@ -96,7 +99,7 @@ try {
         $stmt->execute([$email]);
     } else {
         $stmt = $pdo->prepare("
-            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, 
+            SELECT id, name, surname, email, cell, avatar, password_hash, provider, status, activated,
                    COALESCE(failed_attempts, 0) as failed_attempts,
                    locked_until,
                    COALESCE(lockout_stage, 0) as lockout_stage,
@@ -427,9 +430,53 @@ try {
         }
     }
 
+    // If account not activated, send OTP to email or cell (whichever user has) so they can verify
+    $otpSent = false;
+    $otpChannel = null;
+    $otpExpiresIn = 600;
+    $otpId = null;
+    if ((int)($user['activated'] ?? 0) === 0) {
+        $hasEmail = !empty(trim((string)($user['email'] ?? ''))) && filter_var(trim($user['email']), FILTER_VALIDATE_EMAIL);
+        $hasCell = !empty(trim((string)($user['cell'] ?? '')));
+        $otpDestination = null;
+        if ($hasEmail) {
+            $otpChannel = 'email';
+            $otpDestination = trim($user['email']);
+        } elseif ($hasCell) {
+            $otpChannel = 'sms';
+            $otpDestination = trim($user['cell']);
+        }
+        if ($otpDestination && $otpChannel) {
+            try {
+                $otpRow = createRegistrationOtp($pdo, (int)$user['id'], $otpChannel, $otpDestination);
+                $otpId = (int)($otpRow['otp_id'] ?? 0);
+                $otpCode = (string)($otpRow['otp_code'] ?? '');
+                if ($otpChannel === 'email') {
+                    sendOtpEmail($otpDestination, (string)($user['name'] ?? 'User'), $otpCode, [
+                        'user_id' => $user['id'],
+                        'otp_id' => $otpId,
+                        'source' => 'login'
+                    ]);
+                    $otpSent = true;
+                } else {
+                    sendOtpSms($otpDestination, $otpCode, [
+                        'user_id' => $user['id'],
+                        'otp_id' => $otpId,
+                        'source' => 'login'
+                    ]);
+                    $otpSent = true;
+                }
+            } catch (Throwable $e) {
+                logException('mobile_auth_login_otp', $e, [
+                    'user_id' => $user['id'],
+                    'channel' => $otpChannel
+                ]);
+            }
+        }
+    }
+
     // Return response matching Flutter expectations
-    http_response_code(200);
-    echo json_encode([
+    $responsePayload = [
         'access_token' => $access_token,
         'refresh_token' => $refresh_token,
         'token_type' => 'Bearer',
@@ -440,10 +487,19 @@ try {
             'email' => $user['email'],
             'phone' => $user['cell'],
             'avatar' => $user['avatar'],
+            'activated' => (bool)((int)($user['activated'] ?? 0)),
             'created_at' => $user['created_at'],
             'updated_at' => $user['updated_at']
         ]
-    ]);
+    ];
+    if ($otpChannel !== null) {
+        $responsePayload['otp_sent'] = $otpSent;
+        $responsePayload['otp_channel'] = $otpChannel;
+        $responsePayload['otp_expires_in'] = $otpExpiresIn;
+        $responsePayload['otp_id'] = $otpId;
+    }
+    http_response_code(200);
+    echo json_encode($responsePayload);
 
 } catch (PDOException $e) {
     logException('mobile_auth_login', $e);
