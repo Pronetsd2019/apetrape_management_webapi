@@ -1,12 +1,40 @@
 <?php
 /**
- * Log failed token operations (e.g. refresh) to logs/tokens.
+ * Log token operations (e.g. refresh) to logs/tokens.
  * Project root is assumed to be control/../..
+ * - logTokenEvent: all events → year/month/day/refresh.log
+ * - logFailedToken: failures only → year/month/day/failed.log
  */
 
-function logFailedToken($source, $message, $context = []) {
+function _tokenLogDir() {
     $base = dirname(__DIR__, 2) . '/logs/tokens';
-    $logDir = $base . '/' . date('Y') . '/' . date('m') . '/' . date('d');
+    return $base . '/' . date('Y') . '/' . date('m') . '/' . date('d');
+}
+
+function logTokenEvent($source, $success, $message, $context = []) {
+    $logDir = _tokenLogDir();
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0755, true);
+    }
+    $timestamp = date('Y-m-d H:i:s');
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $entry = [
+        'timestamp' => $timestamp,
+        'source' => $source,
+        'success' => $success,
+        'message' => $message,
+        'ip' => $ip,
+        'context' => $context
+    ];
+    $line = $timestamp . ' [' . $source . '] success=' . ($success ? 'true' : 'false') . ' ' . $message . ' ' . json_encode($entry) . "\n";
+    @file_put_contents($logDir . '/refresh.log', $line, FILE_APPEND | LOCK_EX);
+    if (!$success) {
+        logFailedToken($source, $message, $context);
+    }
+}
+
+function logFailedToken($source, $message, $context = []) {
+    $logDir = _tokenLogDir();
     if (!is_dir($logDir)) {
         @mkdir($logDir, 0755, true);
     }
