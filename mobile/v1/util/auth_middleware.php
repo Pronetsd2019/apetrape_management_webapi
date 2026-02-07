@@ -101,11 +101,13 @@ function requireMobileJwtAuth()
 
     $payload = validateJWT($token);
 
-    if ($payload === false) {
-        logError('mobile_auth_middleware', 'Token failed: invalid or expired JWT (signature invalid, expired, or malformed)', [
+    if (isset($payload['error'])) {
+        $jwtReason = $payload['error'];
+        logError('mobile_auth_middleware', 'Token failed: ' . $jwtReason, [
             'request_uri' => $_SERVER['REQUEST_URI'] ?? null,
             'method' => $_SERVER['REQUEST_METHOD'] ?? null,
-            'token_length' => strlen($token)
+            'token_length' => strlen($token),
+            'jwt_error' => $jwtReason
         ]);
         http_response_code(401);
         header('Content-Type: application/json');

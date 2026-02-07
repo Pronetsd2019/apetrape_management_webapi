@@ -120,10 +120,13 @@ if ($auth_header && preg_match('/Bearer\s+(.*)$/i', $auth_header, $matches)) {
     
     if (!empty($token)) {
         $decoded = validateJWT($token);
-        $auth_debug['jwt_validation_result'] = $decoded !== false ? 'success' : 'failed';
+        $auth_debug['jwt_validation_result'] = (!isset($decoded['error']) && is_array($decoded)) ? 'success' : 'failed';
+        if (isset($decoded['error'])) {
+            $auth_debug['jwt_error'] = $decoded['error'];
+        }
         
         // Check for user_id or sub (JWT standard claim)
-        if ($decoded !== false && is_array($decoded)) {
+        if (!isset($decoded['error']) && is_array($decoded)) {
             $auth_debug['decoded_payload'] = array_keys($decoded);
             $user_id_from_token = null;
             

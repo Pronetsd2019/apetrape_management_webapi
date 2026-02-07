@@ -36,15 +36,14 @@ function generateJWT($payload, $expiration_minutes = 15) {
 /**
  * Validate and Decode JWT Token
  * @param string $token JWT token
- * @return array|false Decoded payload or false if invalid
+ * @return array Decoded payload on success, or array with single key 'error' => message on failure
  */
 function validateJWT($token) {
     try {
         $decoded = JWT::decode($token, new Key(JWT_SECRET, JWT_ALGORITHM));
         return (array) $decoded;
     } catch (\Exception $e) {
-        // Token is invalid, expired, or malformed
-        return false;
+        return ['error' => $e->getMessage()];
     }
 }
 
