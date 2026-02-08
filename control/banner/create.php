@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  *
  * Expects multipart/form-data:
  *   - image (file, required): banner image to upload
- *   - fliter (string, optional): filter/category
+ *   - filter (string, optional): filter/category
  *   - status (int, optional): default 1
  *   - weight (int, optional): sort order, default 0
  * Uploaded image is saved under uploads/banners; its URL path is stored in banner.url.
@@ -65,7 +65,7 @@ function respondBadRequest(string $message): never
 }
 
 // Form fields (multipart/form-data)
-$fliter = trim($_POST['fliter'] ?? '');
+$filter = trim($_POST['filter'] ?? '');
 $status = isset($_POST['status']) ? (int)$_POST['status'] : 1;
 $weight = isset($_POST['weight']) ? (int)$_POST['weight'] : 0;
 
@@ -120,15 +120,15 @@ try {
 
     // Insert banner
     $stmt = $pdo->prepare("
-        INSERT INTO banner (url, fliter, status, weight, create_at, updated_at)
+        INSERT INTO banner (url, filter, status, weight, create_at, updated_at)
         VALUES (?, ?, ?, ?, NOW(), NOW())
     ");
-    $stmt->execute([$url, $fliter !== '' ? $fliter : null, $status, $weight]);
+    $stmt->execute([$url, $filter !== '' ? $filter : null, $status, $weight]);
 
     $banner_id = (int)$pdo->lastInsertId();
 
     $stmt = $pdo->prepare("
-        SELECT id, url, fliter, create_at, updated_at, status, weight
+        SELECT id, url, filter, create_at, updated_at, status, weight
         FROM banner
         WHERE id = ?
     ");
@@ -139,7 +139,7 @@ try {
         $row = [
             'id' => $banner_id,
             'url' => $url,
-            'fliter' => $fliter,
+            'filter' => $filter,
             'status' => $status,
             'weight' => $weight,
             'create_at' => date('Y-m-d H:i:s'),

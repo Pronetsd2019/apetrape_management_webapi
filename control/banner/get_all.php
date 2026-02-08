@@ -55,7 +55,7 @@ try {
         SELECT
             id,
             url,
-            fliter,
+            filter,
             create_at,
             updated_at,
             status,
