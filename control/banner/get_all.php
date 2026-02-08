@@ -38,7 +38,7 @@ if (!$userId) {
     exit;
 }
 
-if (!checkUserPermission($userId, 'banners', 'read')) {
+if (!checkUserPermission($userId, 'banner', 'read')) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'You do not have permission to read banners.']);
     exit;

@@ -45,7 +45,7 @@ if (!$userId) {
     exit;
 }
 
-if (!checkUserPermission($userId, 'banners', 'create')) {
+if (!checkUserPermission($userId, 'banner', 'create')) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'You do not have permission to create banners.']);
     exit;
