@@ -40,7 +40,7 @@ if (!$userId) {
     exit;
 }
 
-if (!checkUserPermission($userId, 'banners', 'update')) {
+if (!checkUserPermission($userId, 'banner', 'update')) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'You do not have permission to update banners.']);
     exit;

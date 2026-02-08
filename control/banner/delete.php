@@ -41,7 +41,7 @@ if (!$userId) {
     exit;
 }
 
-if (!checkUserPermission($userId, 'banners', 'delete')) {
+if (!checkUserPermission($userId, 'banner', 'delete')) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'You do not have permission to delete banners.']);
     exit;
