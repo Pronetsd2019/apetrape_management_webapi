@@ -205,7 +205,14 @@ try {
     elseif (isset($input['img']) && !empty($input['img'])) {
         $img = trim($input['img']);
     }
-    
+
+    // Image is required for root categories; optional for subcategories
+    if ($parent_id === null && empty($img)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'Image is required for root categories.']);
+        exit;
+    }
+
     // Insert category
     $stmt = $pdo->prepare("
         INSERT INTO categories (name, parent_id, slug, sort_order, img)
