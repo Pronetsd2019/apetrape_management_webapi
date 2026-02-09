@@ -107,8 +107,14 @@ try {
         exit;
     }
     
-    $parent_id = isset($input['parent_id']) && $input['parent_id'] !== '' ? (int)$input['parent_id'] : null;
-    $sort_order = isset($input['sort_order']) ? (int)$input['sort_order'] : 0;
+    // Parent ID and sort_order from JSON or form (multipart/form-data leaves php://input empty)
+    $parent_id = null;
+    if (isset($input['parent_id']) && $input['parent_id'] !== '') {
+        $parent_id = (int)$input['parent_id'];
+    } elseif (isset($_POST['parent_id']) && $_POST['parent_id'] !== '') {
+        $parent_id = (int)$_POST['parent_id'];
+    }
+    $sort_order = isset($input['sort_order']) ? (int)$input['sort_order'] : (isset($_POST['sort_order']) ? (int)$_POST['sort_order'] : 0);
     
     // Validate parent_id exists if provided
     if ($parent_id !== null) {
