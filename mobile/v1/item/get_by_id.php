@@ -62,7 +62,6 @@ try {
             i.price,
             i.discount,
             i.sale_price,
-            i.cost_price,
             i.lead_time,
             i.created_at,
             i.updated_at
@@ -139,7 +138,6 @@ try {
         'price' => $item['price'] ? (float)$item['price'] : null,
         'discount' => $item['discount'] ? (float)$item['discount'] : null,
         'sale_price' => $item['sale_price'] ? (float)$item['sale_price'] : null,
-        'cost_price' => $item['cost_price'] ? (float)$item['cost_price'] : null,
         'lead_time' => $item['lead_time'] ?: null,
         'images' => $images,
         'supported_models' => $supported_models,

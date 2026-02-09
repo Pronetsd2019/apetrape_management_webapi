@@ -249,7 +249,6 @@ try {
                 'price' => $item['price'] ? (float)$item['price'] : null,
                 'discount' => $item['discount'] ? (float)$item['discount'] : null,
                 'sale_price' => $item['sale_price'] ? (float)$item['sale_price'] : null,
-                'cost_price' => $item['cost_price'] ? (float)$item['cost_price'] : null,
                 'lead_time' => $item['lead_time'] ?: null,
                 'image_url' => $imageUrl,
                 'supported_models' => $modelsByItem[$itemId] ?? [],
