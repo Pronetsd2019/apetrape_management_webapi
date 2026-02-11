@@ -57,58 +57,57 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
 
-// Validate required fields
-$required_fields = ['manufacturer_id', 'model_name', 'variant', 'year_from', 'year_to'];
+// Required fields
+$required_fields = ['manufacturer_id', 'model_name', 'variant'];
 foreach ($required_fields as $field) {
-    if (!isset($input[$field]) || empty($input[$field])) {
+    if (!isset($input[$field]) || $input[$field] === '') {
         http_response_code(400);
         echo json_encode(['success' => false, 'message' => "Field '$field' is required."]);
         exit;
     }
 }
 
+// year_from and year_to are optional
+$year_from = isset($input['year_from']) && $input['year_from'] !== '' && is_numeric($input['year_from']) ? (int)$input['year_from'] : null;
+$year_to = isset($input['year_to']) && $input['year_to'] !== '' && is_numeric($input['year_to']) ? (int)$input['year_to'] : null;
+
 try {
     // Validate manufacturer_id exists
+    $manufacturer_id = (int)$input['manufacturer_id'];
     $stmt = $pdo->prepare("SELECT id FROM manufacturers WHERE id = ?");
-    $stmt->execute([$input['manufacturer_id']]);
+    $stmt->execute([$manufacturer_id]);
     if (!$stmt->fetch()) {
         http_response_code(404);
         echo json_encode(['success' => false, 'message' => 'Manufacturer not found.']);
         exit;
     }
 
-    if (!is_numeric($input['year_from']) || !is_numeric($input['year_to'])) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Fields \'year_from\' and \'year_to\' must be numeric.']);
-        exit;
+    // When both year_from and year_to are provided, validate them
+    if ($year_from !== null && $year_to !== null) {
+        if ($year_from <= 0 || $year_to <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Fields \'year_from\' and \'year_to\' must be positive integers when provided.']);
+            exit;
+        }
+        if ($year_to < $year_from) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => '\'year_to\' cannot be less than \'year_from\'.']);
+            exit;
+        }
     }
 
-    $year_from = (int)$input['year_from'];
-    $year_to = (int)$input['year_to'];
+    $model_name = trim((string)$input['model_name']);
+    $variant = trim((string)$input['variant']);
 
-    if ($year_from <= 0 || $year_to <= 0) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Fields \'year_from\' and \'year_to\' must be positive integers.']);
-        exit;
-    }
-
-    if ($year_to < $year_from) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => '\'year_to\' cannot be less than \'year_from\'.']);
-        exit;
-    }
-
-    // Insert vehicle model
+    // Insert vehicle model (year_from, year_to optional)
     $stmt = $pdo->prepare("
         INSERT INTO vehicle_models (manufacturer_id, model_name, variant, year_from, year_to)
         VALUES (?, ?, ?, ?, ?)
     ");
 
-    $variant = $input['variant'];
-
     $stmt->execute([
-        $input['manufacturer_id'],
-        $input['model_name'],
+        $manufacturer_id,
+        $model_name,
         $variant,
         $year_from,
         $year_to
@@ -118,9 +117,9 @@ try {
 
     // Fetch created vehicle model
     $stmt = $pdo->prepare("
-        SELECT vm.id, vm.manufacturer_id, vm.model_name, vm.variant, 
+        SELECT vm.id, vm.manufacturer_id, vm.model_name, vm.variant,
                vm.year_from, vm.year_to, vm.created_at, vm.updated_at,
-               m.name as manufacturer_name
+               m.name AS manufacturer_name
         FROM vehicle_models vm
         INNER JOIN manufacturers m ON vm.manufacturer_id = m.id
         WHERE vm.id = ?
