@@ -138,6 +138,7 @@ try {
         $formatted_address = isset($addr['formatted_address']) ? trim($addr['formatted_address']) : null;
         $latitude = isset($addr['latitude']) ? $addr['latitude'] : null;
         $longitude = isset($addr['longitude']) ? $addr['longitude'] : null;
+        $nickname = array_key_exists('nickname', $addr) ? (trim((string)$addr['nickname']) ?: null) : null;
 
         // Validate required fields for this address
         if (!$address_id || !is_numeric($address_id)) {
@@ -246,43 +247,52 @@ try {
         $country_code = isset($address_components['country_code']) ? trim($address_components['country_code']) : null;
         $postal_code = isset($address_components['postal_code']) ? trim($address_components['postal_code']) : null;
 
-        // Update the address
-        $stmt = $pdo->prepare("
-            UPDATE user_addresses 
-            SET 
-                place_id = ?,
-                formatted_address = ?,
-                latitude = ?,
-                longitude = ?,
-                street_number = ?,
-                street = ?,
-                sublocality = ?,
-                city = ?,
-                district = ?,
-                region = ?,
-                country = ?,
-                country_code = ?,
-                postal_code = ?,
-                updated_at = NOW()
-            WHERE id = ? AND user_id = ?
-        ");
-        $update_result = $stmt->execute([
-            $place_id,
-            $formatted_address,
-            $latitude,
-            $longitude,
-            $street_number,
-            $street,
-            $sublocality,
-            $city,
-            $district,
-            $region,
-            $country,
-            $country_code,
-            $postal_code,
-            $address_id,
-            $user_id
-        ]);
+        // Update the address (nickname: include in payload to set/clear, omit to leave unchanged)
+        if ($nickname === null && !array_key_exists('nickname', $addr)) {
+            $stmt = $pdo->prepare("
+                UPDATE user_addresses 
+                SET 
+                    place_id = ?,
+                    formatted_address = ?,
+                    latitude = ?,
+                    longitude = ?,
+                    street_number = ?,
+                    street = ?,
+                    sublocality = ?,
+                    city = ?,
+                    district = ?,
+                    region = ?,
+                    country = ?,
+                    country_code = ?,
+                    postal_code = ?,
+                    updated_at = NOW()
+                WHERE id = ? AND user_id = ?
+            ");
+            $update_params = [$place_id, $formatted_address, $latitude, $longitude, $street_number, $street, $sublocality, $city, $district, $region, $country, $country_code, $postal_code, $address_id, $user_id];
+        } else {
+            $stmt = $pdo->prepare("
+                UPDATE user_addresses 
+                SET 
+                    place_id = ?,
+                    formatted_address = ?,
+                    latitude = ?,
+                    longitude = ?,
+                    street_number = ?,
+                    street = ?,
+                    sublocality = ?,
+                    city = ?,
+                    district = ?,
+                    region = ?,
+                    country = ?,
+                    country_code = ?,
+                    postal_code = ?,
+                    nickname = ?,
+                    updated_at = NOW()
+                WHERE id = ? AND user_id = ?
+            ");
+            $update_params = [$place_id, $formatted_address, $latitude, $longitude, $street_number, $street, $sublocality, $city, $district, $region, $country, $country_code, $postal_code, $nickname, $address_id, $user_id];
+        }
+        $update_result = $stmt->execute($update_params);
 
         if ($update_result && $stmt->rowCount() > 0) {
             // Fetch updated address
@@ -302,6 +312,7 @@ try {
                     country,
                     country_code,
                     postal_code,
+                    nickname,
                     created_at,
                     updated_at
                 FROM user_addresses
@@ -320,6 +331,7 @@ try {
                     'formatted_address' => $updated_address['formatted_address'],
                     'latitude' => (float)$updated_address['latitude'],
                     'longitude' => (float)$updated_address['longitude'],
+                    'nickname' => $updated_address['nickname'] ?? null,
                     'street_number' => $updated_address['street_number'],
                     'street' => $updated_address['street'],
                     'sublocality' => $updated_address['sublocality'],

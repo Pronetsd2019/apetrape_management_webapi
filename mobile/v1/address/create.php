@@ -160,6 +160,9 @@ $country = isset($address_components['country']) ? trim($address_components['cou
 $country_code = isset($address_components['country_code']) ? trim($address_components['country_code']) : null;
 $postal_code = isset($address_components['postal_code']) ? trim($address_components['postal_code']) : null;
 
+// Optional: nickname for the address (e.g. "Home", "Office")
+$nickname = isset($input['nickname']) ? trim((string)$input['nickname']) : null;
+
 try {
     // Verify user exists and is active
     $stmt = $pdo->prepare("SELECT id, status FROM users WHERE id = ?");
@@ -208,26 +211,27 @@ try {
     // Insert the address
     $stmt = $pdo->prepare("
         INSERT INTO user_addresses (
-            user_id, 
-            place_id, 
-            formatted_address, 
-            latitude, 
-            longitude, 
-            street_number, 
-            street, 
-            sublocality, 
-            city, 
-            district, 
-            region, 
-            country, 
-            country_code, 
+            user_id,
+            place_id,
+            formatted_address,
+            latitude,
+            longitude,
+            street_number,
+            street,
+            sublocality,
+            city,
+            district,
+            region,
+            country,
+            country_code,
             postal_code,
+            nickname,
             created_at,
             updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     ");
-    
+
     $result = $stmt->execute([
         $user_id,
         $place_id,
@@ -242,7 +246,8 @@ try {
         $region,
         $country,
         $country_code,
-        $postal_code
+        $postal_code,
+        $nickname
     ]);
 
     if (!$result) {
@@ -275,6 +280,7 @@ try {
             country,
             country_code,
             postal_code,
+            nickname,
             created_at,
             updated_at
         FROM user_addresses
@@ -301,6 +307,7 @@ try {
             'formatted_address' => $address['formatted_address'],
             'latitude' => (float)$address['latitude'],
             'longitude' => (float)$address['longitude'],
+            'nickname' => $address['nickname'] ?? null,
             'street_number' => $address['street_number'],
             'street' => $address['street'],
             'sublocality' => $address['sublocality'],

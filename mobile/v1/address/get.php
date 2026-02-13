@@ -89,6 +89,7 @@ try {
             country,
             country_code,
             postal_code,
+            nickname,
             created_at,
             updated_at
         FROM user_addresses
@@ -107,6 +108,7 @@ try {
             'formatted_address' => $address['formatted_address'],
             'latitude' => (float)$address['latitude'],
             'longitude' => (float)$address['longitude'],
+            'nickname' => $address['nickname'] ?? null,
             'address_components' => [
                 'street_number' => $address['street_number'],
                 'street' => $address['street'],
