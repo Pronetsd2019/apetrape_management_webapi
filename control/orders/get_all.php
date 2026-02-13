@@ -122,7 +122,7 @@ try {
             SELECT
                 id,
                 sku,
-                description,
+                name,
                 quantity,
                 price,
                 total,

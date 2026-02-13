@@ -105,7 +105,7 @@ try {
 
     // Fetch order items
     $stmtItems = $pdo->prepare("
-        SELECT sku, description, quantity, price, total
+        SELECT sku, name, quantity, price, total
         FROM order_items
         WHERE order_id = ?
         ORDER BY id ASC
@@ -234,7 +234,7 @@ EOD;
     foreach ($items as $item) {
         $tblRows .= '<tr>';
         $tblRows .= '<td>' . htmlspecialchars($item['sku']) . '</td>';
-        $tblRows .= '<td>' . htmlspecialchars($item['description']) . '</td>';
+        $tblRows .= '<td>' . htmlspecialchars($item['name']) . '</td>';
         $tblRows .= '<td align="center">' . $item['quantity'] . '</td>';
         $tblRows .= '<td align="right">' . number_format($item['price'], 2) . '</td>';
         $tblRows .= '<td align="right">' . number_format($item['total'], 2) . '</td>';

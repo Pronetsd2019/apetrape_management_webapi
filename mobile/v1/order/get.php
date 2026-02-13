@@ -116,7 +116,7 @@ try {
             SELECT
                 oi.id,
                 oi.sku,
-                oi.description,
+                oi.name,
                 oi.quantity,
                 oi.price,
                 oi.total,

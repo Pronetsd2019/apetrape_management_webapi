@@ -212,7 +212,7 @@ try {
     // Get order items with item_id
     $getItemsStmt = $pdo->prepare("
         SELECT
-            oi.id, oi.sku, oi.description, oi.quantity, oi.price, oi.total,
+            oi.id, oi.sku, oi.name, oi.quantity, oi.price, oi.total,
             oi.created_at, oi.updated_at, oi.cost, i.id as item_id
         FROM order_items oi
         LEFT JOIN items i ON oi.sku = i.sku

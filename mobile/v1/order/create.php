@@ -121,7 +121,6 @@ try {
             i.name,
             i.sku,
             i.price,
-            i.description,
             i.cost_price
         FROM cart c
         JOIN items i ON c.item_id = i.id
@@ -176,7 +175,7 @@ try {
     // Insert order items
     $itemStmt = $pdo->prepare("
         INSERT INTO order_items (
-            sku, description, quantity, price, total, created_at, updated_at, order_id, cost
+            sku, name, quantity, price, total, created_at, updated_at, order_id, cost
         ) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), ?, ?)
     ");
 
@@ -185,7 +184,7 @@ try {
 
         $itemStmt->execute([
             $item['sku'],
-            $item['description'] ?: $item['name'], // Use name if no description
+            $item['name'],
             $item['quantity'],
             $item['price'],
             $total,
@@ -266,7 +265,7 @@ try {
     // Get order items with item_id
     $getItemsStmt = $pdo->prepare("
         SELECT
-            oi.id, oi.sku, oi.description, oi.quantity, oi.price, oi.total,
+            oi.id, oi.sku, oi.name, oi.quantity, oi.price, oi.total,
             oi.created_at, oi.updated_at, oi.cost, i.id as item_id
         FROM order_items oi
         LEFT JOIN items i ON oi.sku = i.sku
