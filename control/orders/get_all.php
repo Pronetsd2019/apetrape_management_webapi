@@ -77,14 +77,12 @@ try {
             o.order_no,
             o.confirm_date,
             o.pay_method,
-            pm.name as pay_method_name,
             u.name,
             u.surname,
             u.email,
             u.cell
         FROM orders o
         INNER JOIN users u ON o.user_id = u.id
-        INNER JOIN pay_method pm ON o.pay_method = pm.id
     ";
 
     $params = [];
