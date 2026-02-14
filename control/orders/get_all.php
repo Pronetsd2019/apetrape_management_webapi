@@ -59,10 +59,22 @@ try {
     $status = $_GET['status'] ?? null;
     $user_id = $_GET['user_id'] ?? null;
     $sort = strtolower($_GET['sort'] ?? 'desc');
+    $pay_status = isset($_GET['pay_status']) ? strtolower(trim($_GET['pay_status'])) : null;
 
     // Validate sort parameter
     if (!in_array($sort, ['asc', 'desc'])) {
         $sort = 'desc';
+    }
+
+    // Validate pay_status (payment status filter)
+    $validPayStatuses = ['full_paid', 'partial', 'full_and_partial', 'no_payment'];
+    if ($pay_status !== null && !in_array($pay_status, $validPayStatuses)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid pay_status. Use: full_paid, partial, full_and_partial, no_payment'
+        ]);
+        exit;
     }
 
     // Build query for orders with user information
@@ -300,6 +312,26 @@ try {
             }
         }
         unset($order);
+
+        // Filter by payment status only when pay_status is in URL; no param = return all orders
+        if ($pay_status !== null) {
+            $orders = array_values(array_filter($orders, function ($order) use ($pay_status) {
+                $paid = (float)($order['aggregations']['paid_amount'] ?? 0);
+                $total = (float)($order['aggregations']['total_amount'] ?? 0);
+                switch ($pay_status) {
+                    case 'full_paid':
+                        return $total > 0 && $paid >= $total;
+                    case 'partial':
+                        return $paid > 0 && $paid < $total;
+                    case 'full_and_partial':
+                        return $paid > 0;
+                    case 'no_payment':
+                        return $paid == 0;
+                    default:
+                        return true;
+                }
+            }));
+        }
     }
 
     http_response_code(200);
