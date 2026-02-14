@@ -77,12 +77,18 @@ try {
             o.order_no,
             o.confirm_date,
             o.pay_method,
+            o.delivery_method,
+            o.delivery_address,
+            o.pickup_point,
             u.name,
             u.surname,
             u.email,
-            u.cell
+            u.cell,
+            pp.name AS pickup_point_name,
+            pp.address AS pickup_point_address
         FROM orders o
         INNER JOIN users u ON o.user_id = u.id
+        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
     ";
 
     $params = [];
@@ -218,6 +224,13 @@ try {
             $paidAmount = $paymentsMap[$orderId] ?? 0.0;
             $deliveryFeeAmount = $deliveryFeeMap[$orderId] ?? 0.0;
             $pickupFeeAmount = $pickupFeeMap[$orderId] ?? 0.0;
+
+            // Normalize delivery_method to "collection" or "delivery"; set single address string
+            $dbDeliveryMethod = $order['delivery_method'] ?? null;
+            $order['address'] = ($dbDeliveryMethod === 'delivery')
+                ? ($order['delivery_address'] ?? '')
+                : trim(($order['pickup_point_name'] ?? '') . ($order['pickup_point_address'] ? ' - ' . $order['pickup_point_address'] : ''));
+            $order['delivery_method'] = ($dbDeliveryMethod === 'pickup') ? 'collection' : ($dbDeliveryMethod ?: 'delivery');
 
             if (isset($itemsByOrder[$orderId])) {
                 $order['order_items'] = $itemsByOrder[$orderId]['items'];
