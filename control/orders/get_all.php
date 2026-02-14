@@ -179,30 +179,110 @@ try {
             $paymentsMap[$payment['order_id']] = (float)$payment['total_paid'];
         }
 
-        // Attach items, aggregations, and payment info to each order
+        // Get delivery fees (from delivery_fee table, as in mobile order create)
+        $stmtDeliveryFee = $pdo->prepare("
+            SELECT order_id, id, cost_map_id, fee, created_at, updated_at
+            FROM delivery_fee
+            WHERE order_id IN ($placeholders)
+        ");
+        $stmtDeliveryFee->execute($orderIds);
+        $deliveryFeesByOrder = $stmtDeliveryFee->fetchAll(PDO::FETCH_ASSOC);
+
+        $deliveryFeeMap = [];
+        $deliveryFeeRowByOrder = [];
+        foreach ($deliveryFeesByOrder as $row) {
+            $deliveryFeeMap[$row['order_id']] = (float)$row['fee'];
+            $deliveryFeeRowByOrder[$row['order_id']] = $row;
+        }
+
+        // Get pickup fees (from pickup_order_fees table, as in mobile order create)
+        $stmtPickupFee = $pdo->prepare("
+            SELECT order_id, id, pickup_id, fee, create_At
+            FROM pickup_order_fees
+            WHERE order_id IN ($placeholders)
+        ");
+        $stmtPickupFee->execute($orderIds);
+        $pickupFeesByOrder = $stmtPickupFee->fetchAll(PDO::FETCH_ASSOC);
+
+        $pickupFeeMap = [];
+        $pickupFeeRowByOrder = [];
+        foreach ($pickupFeesByOrder as $row) {
+            $pickupFeeMap[$row['order_id']] = (float)$row['fee'];
+            $pickupFeeRowByOrder[$row['order_id']] = $row;
+        }
+
+        // Attach items, aggregations, payment info, delivery/pickup fees, and total after fees to each order
         foreach ($orders as &$order) {
             $orderId = $order['id'];
             $totalPrice = 0.0;
             $paidAmount = $paymentsMap[$orderId] ?? 0.0;
+            $deliveryFeeAmount = $deliveryFeeMap[$orderId] ?? 0.0;
+            $pickupFeeAmount = $pickupFeeMap[$orderId] ?? 0.0;
 
             if (isset($itemsByOrder[$orderId])) {
                 $order['order_items'] = $itemsByOrder[$orderId]['items'];
                 $totalPrice = $itemsByOrder[$orderId]['total_price'];
+                $totalAmount = $totalPrice + $deliveryFeeAmount + $pickupFeeAmount;
+                $order['delivery_fee'] = isset($deliveryFeeRowByOrder[$orderId])
+                    ? [
+                        'id' => (int)$deliveryFeeRowByOrder[$orderId]['id'],
+                        'cost_map_id' => (int)$deliveryFeeRowByOrder[$orderId]['cost_map_id'],
+                        'fee' => (float)$deliveryFeeRowByOrder[$orderId]['fee'],
+                        'order_id' => (int)$deliveryFeeRowByOrder[$orderId]['order_id'],
+                        'created_at' => $deliveryFeeRowByOrder[$orderId]['created_at'],
+                        'updated_at' => $deliveryFeeRowByOrder[$orderId]['updated_at']
+                    ]
+                    : null;
+                $order['pickup_fee'] = isset($pickupFeeRowByOrder[$orderId])
+                    ? [
+                        'id' => (int)$pickupFeeRowByOrder[$orderId]['id'],
+                        'pickup_id' => (int)$pickupFeeRowByOrder[$orderId]['pickup_id'],
+                        'order_id' => (int)$pickupFeeRowByOrder[$orderId]['order_id'],
+                        'fee' => (float)$pickupFeeRowByOrder[$orderId]['fee'],
+                        'create_At' => $pickupFeeRowByOrder[$orderId]['create_At']
+                    ]
+                    : null;
                 $order['aggregations'] = [
                     'unique_items_count' => $itemsByOrder[$orderId]['unique_items_count'],
                     'total_quantity' => $itemsByOrder[$orderId]['total_quantity'],
-                    'total_price' => $totalPrice,
+                    'total_price' => round($totalPrice, 2),
+                    'delivery_fee' => round($deliveryFeeAmount, 2),
+                    'pickup_fee' => round($pickupFeeAmount, 2),
+                    'total_amount' => round($totalAmount, 2),
                     'paid_amount' => $paidAmount,
-                    'due_amount' => $totalPrice - $paidAmount
+                    'due_amount' => round($totalAmount - $paidAmount, 2)
                 ];
             } else {
                 $order['order_items'] = [];
+                $order['delivery_fee'] = isset($deliveryFeeRowByOrder[$orderId])
+                    ? [
+                        'id' => (int)$deliveryFeeRowByOrder[$orderId]['id'],
+                        'cost_map_id' => (int)$deliveryFeeRowByOrder[$orderId]['cost_map_id'],
+                        'fee' => (float)$deliveryFeeRowByOrder[$orderId]['fee'],
+                        'order_id' => (int)$deliveryFeeRowByOrder[$orderId]['order_id'],
+                        'created_at' => $deliveryFeeRowByOrder[$orderId]['created_at'],
+                        'updated_at' => $deliveryFeeRowByOrder[$orderId]['updated_at']
+                    ]
+                    : null;
+                $order['pickup_fee'] = isset($pickupFeeRowByOrder[$orderId])
+                    ? [
+                        'id' => (int)$pickupFeeRowByOrder[$orderId]['id'],
+                        'pickup_id' => (int)$pickupFeeRowByOrder[$orderId]['pickup_id'],
+                        'order_id' => (int)$pickupFeeRowByOrder[$orderId]['order_id'],
+                        'fee' => (float)$pickupFeeRowByOrder[$orderId]['fee'],
+                        'create_At' => $pickupFeeRowByOrder[$orderId]['create_At']
+                    ]
+                    : null;
+                $totalAmount = $deliveryFeeAmount + $pickupFeeAmount;
                 $order['aggregations'] = [
                     'unique_items_count' => 0,
                     'total_quantity' => 0,
                     'total_price' => 0.0,
+                    'delivery_fee' => round($deliveryFeeAmount, 2),
+                    'pickup_fee' => round($pickupFeeAmount, 2),
+                    'total_amount' => round($totalAmount, 2),
                     'paid_amount' => $paidAmount,
-                    'due_amount' => 0.0 - $paidAmount
+                    'due_amount' => round($totalAmount - $paidAmount, 2)
                 ];
             }
         }
