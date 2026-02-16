@@ -118,19 +118,26 @@ try {
 
     $pdo->beginTransaction();
 
+    $updateStmt = $pdo->prepare("
+        UPDATE sourcing_calls SET type = ?, updated_at = NOW() WHERE order_id = ? AND order_item_id = ?
+    ");
     $insertStmt = $pdo->prepare("
         INSERT INTO sourcing_calls (order_id, order_item_id, type, status)
         VALUES (?, ?, ?, 'pending')
     ");
 
     $rowsInserted = 0;
+    $rowsUpdated = 0;
     foreach ($items as $item) {
-        $insertStmt->execute([
-            $order_id,
-            (int)$item['order_item_id'],
-            $item['type']
-        ]);
-        $rowsInserted++;
+        $order_item_id = (int)$item['order_item_id'];
+        $type = $item['type'];
+        $updateStmt->execute([$type, $order_id, $order_item_id]);
+        if ($updateStmt->rowCount() > 0) {
+            $rowsUpdated++;
+        } else {
+            $insertStmt->execute([$order_id, $order_item_id, $type]);
+            $rowsInserted++;
+        }
     }
 
     $pdo->commit();
@@ -141,7 +148,8 @@ try {
         'message' => 'Sourcing saved.',
         'data' => [
             'order_id' => $order_id,
-            'rows_inserted' => $rowsInserted
+            'rows_inserted' => $rowsInserted,
+            'rows_updated' => $rowsUpdated
         ]
     ]);
 
