@@ -1,4 +1,16 @@
 <?php
+// Capture any fatal error to a file (no require - runs even if later requires fail)
+$proccessLogFile = __DIR__ . '/../logs/proccess_debug.txt';
+register_shutdown_function(function () use ($proccessLogFile) {
+    $e = error_get_last();
+    if (!$e) return;
+    if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING], true)) return;
+    $dir = dirname($proccessLogFile);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    $msg = date('Y-m-d H:i:s') . " FATAL type=" . $e['type'] . " " . $e['message'] . " in " . $e['file'] . " on line " . $e['line'] . "\n";
+    @file_put_contents($proccessLogFile, $msg, LOCK_EX | FILE_APPEND);
+});
+
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
