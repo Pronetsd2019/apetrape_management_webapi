@@ -27,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Inserts one row per item into sourcing_calls (order_id, order_item_id, type, status pending).
  */
 
+try {
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
@@ -169,5 +170,28 @@ try {
     echo json_encode([
         'success' => false,
         'message' => 'An error occurred while saving sourcing.'
+    ]);
+}
+} catch (Throwable $e) {
+    if (isset($pdo) && $pdo && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    logException('orders_proccess_sourcing', $e);
+    $errMsg = $e->getMessage();
+    $errFile = $e->getFile();
+    $errLine = $e->getLine();
+    $logDir = __DIR__ . '/../logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0755, true);
+    }
+    @file_put_contents($logDir . '/last_error.txt', date('Y-m-d H:i:s') . "\n" . $errMsg . "\n" . $errFile . ':' . $errLine . "\n" . $e->getTraceAsString() . "\n", LOCK_EX);
+    http_response_code(200);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => false,
+        'message' => 'An error occurred while processing the request.',
+        'error_details' => $errMsg,
+        'error_file' => $errFile,
+        'error_line' => $errLine
     ]);
 }
