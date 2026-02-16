@@ -26,6 +26,9 @@ require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/order_tracker.php';
+require_once __DIR__ . '/../util/firebase_messaging.php';
+require_once __DIR__ . '/../util/notification_logger.php';
 
 requireJwtAuth();
 
@@ -140,7 +143,54 @@ try {
         }
     }
 
+    if ($rowsInserted > 0) {
+        $updateOrderStmt = $pdo->prepare("UPDATE orders SET status = 'processed', updated_at = NOW() WHERE id = ?");
+        $updateOrderStmt->execute([$order_id]);
+        trackOrderAction($pdo, $order_id, 'Order processed');
+    }
+
     $pdo->commit();
+
+    // Best-effort: notify order owner that order has been processed (push only when rows were inserted).
+    if ($rowsInserted > 0) {
+        try {
+            $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
+            $orderStmt->execute([$order_id]);
+            $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
+            $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
+            $orderNo = $orderRow ? ($orderRow['order_no'] ?? (string)$order_id) : (string)$order_id;
+            if ($orderOwnerUserId > 0) {
+                $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
+                $prefStmt->execute([$orderOwnerUserId]);
+                $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+                $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+                if ($pushEnabled) {
+                    $notifTitle = 'Order processed';
+                    $notifBody = "Your order {$orderNo} has been processed.";
+                    $loggedIds = logUserNotification(
+                        $pdo,
+                        $orderOwnerUserId,
+                        'order_processed',
+                        $notifTitle,
+                        $notifBody,
+                        'order',
+                        $order_id,
+                        ['order_id' => (string)$order_id],
+                        'push'
+                    );
+                    $notifData = [
+                        'route' => 'order',
+                        'order_id' => (string)$order_id,
+                        'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
+                        'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
+                    ];
+                    sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+                }
+            }
+        } catch (Throwable $e) {
+            logException('orders_process_push_notification', $e, ['order_id' => $order_id]);
+        }
+    }
 
     http_response_code(201);
     echo json_encode([

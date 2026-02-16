@@ -18,6 +18,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 /**
  * Get All Orders Endpoint
  * GET /orders/get_all.php
+ *
+ * Query parameters (all optional):
+ * - status    Order status filter. Single value or comma-separated for multiple.
+ *             Valid: pending, confirmed, processed, delivered, cancelled, deleted.
+ *             Example: ?status=processed or ?status=processed,pending
+ * - user_id   Filter by order owner (user id).
+ * - sort      Sort by confirm_date: asc | desc (default: desc).
+ * - pay_status  Filter by payment state (applied after fetch):
+ *               full_paid, partial, full_and_partial, no_payment.
+ *
+ * Draft orders are always excluded.
  */
 
  require_once __DIR__ . '/../util/connect.php';
@@ -56,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 
 try {
     // Get optional query parameters for filtering
-    $status = $_GET['status'] ?? null;
+    $statusParam = $_GET['status'] ?? null;
     $user_id = $_GET['user_id'] ?? null;
     $sort = strtolower($_GET['sort'] ?? 'desc');
     $pay_status = isset($_GET['pay_status']) ? strtolower(trim($_GET['pay_status'])) : null;
@@ -64,6 +75,27 @@ try {
     // Validate sort parameter
     if (!in_array($sort, ['asc', 'desc'])) {
         $sort = 'desc';
+    }
+
+    // Parse status filter: single value or comma-separated (e.g. ?status=processed or ?status=processed,pending,cancelled)
+    $validOrderStatuses = ['pending', 'confirmed', 'processed', 'delivered', 'cancelled', 'deleted'];
+    $statuses = [];
+    if ($statusParam !== null && $statusParam !== '') {
+        $raw = is_array($statusParam) ? implode(',', $statusParam) : (string)$statusParam;
+        $candidates = array_map('trim', explode(',', $raw));
+        foreach ($candidates as $s) {
+            if ($s !== '' && in_array($s, $validOrderStatuses)) {
+                $statuses[] = $s;
+            }
+        }
+        if (!empty($candidates) && empty($statuses)) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Invalid status. Use one or more (comma-separated): ' . implode(', ', $validOrderStatuses)
+            ]);
+            exit;
+        }
     }
 
     // Validate pay_status (payment status filter)
@@ -109,9 +141,10 @@ try {
     // Always exclude draft orders
     $conditions[] = "o.status != 'draft'";
 
-    if ($status) {
-        $conditions[] = "o.status = ?";
-        $params[] = $status;
+    if (!empty($statuses)) {
+        $statusPlaceholders = implode(',', array_fill(0, count($statuses), '?'));
+        $conditions[] = "o.status IN ($statusPlaceholders)";
+        $params = array_merge($params, $statuses);
     }
 
     if ($user_id) {
