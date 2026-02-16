@@ -42,7 +42,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT
             oi.sku,
-            oi.description,
+            oi.name,
             SUM(oi.quantity) as total_quantity_sold,
             SUM(oi.total) as total_revenue,
             COUNT(DISTINCT o.id) as orders_count,
@@ -53,7 +53,7 @@ try {
         FROM order_items oi
         INNER JOIN orders o ON oi.order_id = o.id
         WHERE o.status != 'draft'
-        GROUP BY oi.sku, oi.description
+        GROUP BY oi.sku, oi.name
         HAVING total_quantity_sold > 0
         ORDER BY total_quantity_sold DESC
         LIMIT 5
@@ -122,8 +122,8 @@ try {
                 $item = array_merge($itemDetails, $item);
                 $item['item_name'] = $itemDetails['name'];
             } else {
-                // Item not found in items table, use description as name
-                $item['item_name'] = $item['description'];
+                // Item not found in items table, use order_items name as item_name
+                $item['item_name'] = $item['name'] ?? '';
             }
 
             // Format numeric values
