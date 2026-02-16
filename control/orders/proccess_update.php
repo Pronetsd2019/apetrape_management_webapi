@@ -1,14 +1,19 @@
 <?php
-// Debug log in system temp dir (writable by web server); no require so it runs before anything else
-$proccessLogFile = sys_get_temp_dir() . '/proccess_debug.txt';
-register_shutdown_function(function () use ($proccessLogFile) {
+ob_start();
+// On fatal, show error on page
+register_shutdown_function(function () {
     $e = error_get_last();
     if (!$e) return;
     if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING], true)) return;
-    $msg = date('Y-m-d H:i:s') . " FATAL type=" . $e['type'] . " " . $e['message'] . " in " . $e['file'] . " on line " . $e['line'] . "\n";
-    file_put_contents($proccessLogFile, $msg, LOCK_EX | FILE_APPEND);
+    if (ob_get_level()) ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Error: 1');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
+    echo '<h1>Fatal error</h1>';
+    echo '<p><strong>' . htmlspecialchars($e['message']) . '</strong></p>';
+    echo '<p>' . htmlspecialchars($e['file']) . ' on line ' . (int)$e['line'] . '</p>';
+    echo '<pre>' . htmlspecialchars(print_r($e, true)) . '</pre></body></html>';
 });
-file_put_contents($proccessLogFile, date('Y-m-d H:i:s') . " request started\n", LOCK_EX | FILE_APPEND);
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -166,40 +171,33 @@ try {
         $pdo->rollBack();
     }
     logException('orders_proccess_sourcing', $e);
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'message' => 'An error occurred while saving sourcing.',
-        'error_details' => $e->getMessage()
-    ]);
+    if (ob_get_level()) ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
+    echo '<h1>Database error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
+    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
+    exit;
 } catch (Exception $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
     logException('orders_proccess_sourcing', $e);
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'message' => 'An error occurred while saving sourcing.'
-    ]);
+    if (ob_get_level()) ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
+    echo '<h1>Error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
+    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
+    exit;
 }
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
     logException('orders_proccess_sourcing', $e);
-    $errMsg = $e->getMessage();
-    $errFile = $e->getFile();
-    $errLine = $e->getLine();
-    $tempLog = sys_get_temp_dir() . '/proccess_debug.txt';
-    file_put_contents($tempLog, date('Y-m-d H:i:s') . " THROWABLE " . $errMsg . " in " . $errFile . ":" . $errLine . "\n" . $e->getTraceAsString() . "\n", LOCK_EX | FILE_APPEND);
-    http_response_code(200);
-    header('Content-Type: application/json');
-    echo json_encode([
-        'success' => false,
-        'message' => 'An error occurred while processing the request.',
-        'error_details' => $errMsg,
-        'error_file' => $errFile,
-        'error_line' => $errLine
-    ]);
+    if (ob_get_level()) ob_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
+    echo '<h1>Error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
+    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
+    exit;
 }
