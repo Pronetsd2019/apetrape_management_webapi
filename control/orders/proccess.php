@@ -1,5 +1,8 @@
 <?php
 
+// show php error 
+int_set('display_errors',1);
+
 // CORS headers for subdomain support
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
 
