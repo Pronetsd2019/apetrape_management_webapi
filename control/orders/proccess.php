@@ -1,7 +1,9 @@
 <?php
 
-// show php error 
-int_set('display_errors',1);
+require_once __DIR__ . '/../util/error_logger.php';
+
+// show php error
+ini_set('display_errors', 1);
 
 // CORS headers for subdomain support
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
@@ -26,7 +28,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  */
 
 require_once __DIR__ . '/../util/connect.php';
-require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
 

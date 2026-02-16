@@ -83,3 +83,29 @@ function logException($endpoint, $exception, $context = []) {
     
     logError($endpoint, 'Exception: ' . get_class($exception), $errorContext);
 }
+
+/**
+ * Log fatal errors (E_ERROR, E_PARSE, etc.) that occur after this file is loaded.
+ * Only runs if error_logger was required before the fatal occurred.
+ */
+register_shutdown_function(function () {
+    $err = error_get_last();
+    if (!$err) {
+        return;
+    }
+    $fatals = [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING];
+    if (in_array($err['type'], $fatals, true)) {
+        logError('php_fatal', $err['message'], [
+            'file' => $err['file'] ?? null,
+            'line' => $err['line'] ?? null,
+            'type' => $err['type']
+        ]);
+    }
+});
+
+/**
+ * Log uncaught exceptions so they are written to the app log instead of only PHP/server log.
+ */
+set_exception_handler(function (Throwable $e) {
+    logException('uncaught_exception', $e);
+});
