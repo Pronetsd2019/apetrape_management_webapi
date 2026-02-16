@@ -1,15 +1,14 @@
 <?php
-// Capture any fatal error to a file (no require - runs even if later requires fail)
-$proccessLogFile = __DIR__ . '/../logs/proccess_debug.txt';
+// Debug log in system temp dir (writable by web server); no require so it runs before anything else
+$proccessLogFile = sys_get_temp_dir() . '/proccess_debug.txt';
 register_shutdown_function(function () use ($proccessLogFile) {
     $e = error_get_last();
     if (!$e) return;
     if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING], true)) return;
-    $dir = dirname($proccessLogFile);
-    if (!is_dir($dir)) @mkdir($dir, 0755, true);
     $msg = date('Y-m-d H:i:s') . " FATAL type=" . $e['type'] . " " . $e['message'] . " in " . $e['file'] . " on line " . $e['line'] . "\n";
-    @file_put_contents($proccessLogFile, $msg, LOCK_EX | FILE_APPEND);
+    file_put_contents($proccessLogFile, $msg, LOCK_EX | FILE_APPEND);
 });
+file_put_contents($proccessLogFile, date('Y-m-d H:i:s') . " request started\n", LOCK_EX | FILE_APPEND);
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -192,11 +191,8 @@ try {
     $errMsg = $e->getMessage();
     $errFile = $e->getFile();
     $errLine = $e->getLine();
-    $logDir = __DIR__ . '/../logs';
-    if (!is_dir($logDir)) {
-        @mkdir($logDir, 0755, true);
-    }
-    @file_put_contents($logDir . '/last_error.txt', date('Y-m-d H:i:s') . "\n" . $errMsg . "\n" . $errFile . ':' . $errLine . "\n" . $e->getTraceAsString() . "\n", LOCK_EX);
+    $tempLog = sys_get_temp_dir() . '/proccess_debug.txt';
+    file_put_contents($tempLog, date('Y-m-d H:i:s') . " THROWABLE " . $errMsg . " in " . $errFile . ":" . $errLine . "\n" . $e->getTraceAsString() . "\n", LOCK_EX | FILE_APPEND);
     http_response_code(200);
     header('Content-Type: application/json');
     echo json_encode([

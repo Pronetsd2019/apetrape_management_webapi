@@ -56,19 +56,9 @@ try {
         ]
     );
 } catch (PDOException $e) {
-    // Log so it appears in control/logs/errors.log if error_logger was loaded
-    if (function_exists('logError')) {
-        logError('database_connect', 'Connection failed: ' . $e->getMessage(), ['exception' => $e->getMessage()]);
-    }
-    // Write to a file so you see it even when server replaces 500 body (e.g. ErrorDocument)
-    $logDir = dirname(__DIR__) . '/logs';
-    if (!is_dir($logDir)) @mkdir($logDir, 0755, true);
-    @file_put_contents($logDir . '/db_connect_error.txt', date('Y-m-d H:i:s') . ' ' . $e->getMessage() . "\n", LOCK_EX | FILE_APPEND);
-    // Return 200 so server does not replace body with generic 500 page; error is in body
-    if (!headers_sent()) {
-        http_response_code(200);
-        header('Content-Type: application/json');
-    }
+    // Return error response
+    http_response_code(500);
+    header('Content-Type: application/json');
     echo json_encode([
         'success' => false,
         'message' => 'Database connection failed: ' . $e->getMessage()

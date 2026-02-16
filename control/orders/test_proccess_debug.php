@@ -34,4 +34,6 @@ if ($stmt->rowCount() === 0) {
 }
 echo "OK\n";
 
-echo "All checks passed. If the web request still fails, check control/logs/proccess_debug.txt after the next 500.\n";
+echo "All checks passed.\n";
+echo "If the web request still returns 500, the debug log is written to: " . sys_get_temp_dir() . "/proccess_debug.txt\n";
+echo "Check that file after reproducing the 500 (it will contain 'request started' and either 'FATAL' or 'THROWABLE' with the error).\n";
