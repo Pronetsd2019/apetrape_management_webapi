@@ -181,9 +181,24 @@ try {
         ");
         $orderTotalStmt->execute([$orderId]);
         $orderTotalResult = $orderTotalStmt->fetch(PDO::FETCH_ASSOC);
-        $orderTotal = (float)($orderTotalResult['order_total'] ?? 0);
+        $itemsTotal = (float)($orderTotalResult['order_total'] ?? 0);
 
-        // Determine payment status
+        // Get delivery fee for this order
+        $deliveryFeeStmt = $pdo->prepare("SELECT fee FROM delivery_fee WHERE order_id = ? LIMIT 1");
+        $deliveryFeeStmt->execute([$orderId]);
+        $deliveryFeeRow = $deliveryFeeStmt->fetch(PDO::FETCH_ASSOC);
+        $deliveryFee = (float)($deliveryFeeRow['fee'] ?? 0);
+
+        // Get pickup fee for this order
+        $pickupFeeStmt = $pdo->prepare("SELECT fee FROM pickup_order_fees WHERE order_id = ? LIMIT 1");
+        $pickupFeeStmt->execute([$orderId]);
+        $pickupFeeRow = $pickupFeeStmt->fetch(PDO::FETCH_ASSOC);
+        $pickupFee = (float)($pickupFeeRow['fee'] ?? 0);
+
+        // Full order cost (items + delivery + pickup)
+        $orderTotal = $itemsTotal + $deliveryFee + $pickupFee;
+
+        // Determine payment status based on full order cost
         $payStatus = 'unpaid';
         if ($totalPaid == 0) {
             $payStatus = 'unpaid';
