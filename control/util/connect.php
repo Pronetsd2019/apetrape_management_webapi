@@ -56,13 +56,11 @@ try {
         ]
     );
 } catch (PDOException $e) {
-    // Return error response
-    http_response_code(500);
-    header('Content-Type: application/json');
-    echo json_encode([
-        'success' => false,
-        'message' => 'Database connection failed: ' . $e->getMessage()
-    ]);
+    // 200 so server does not replace body with ErrorDocument 500; error still in body
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>DB Error</title></head><body>';
+    echo '<h1>Database connection failed</h1><p>' . htmlspecialchars($e->getMessage()) . '</p></body></html>';
     exit;
 }
 ?>

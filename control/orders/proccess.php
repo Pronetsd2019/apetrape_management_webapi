@@ -6,6 +6,7 @@ register_shutdown_function(function () {
     if (!$e) return;
     if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING], true)) return;
     if (ob_get_level()) ob_clean();
+    http_response_code(200);
     header('Content-Type: text/html; charset=utf-8');
     header('X-Error: 1');
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
