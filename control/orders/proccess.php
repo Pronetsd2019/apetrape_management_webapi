@@ -27,16 +27,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 try {
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
-exit("connect.php");
 require_once __DIR__ . '/../util/check_permission.php';
-exit("check_permission.php");
 requireJwtAuth();
-exit("requireJwtAuth");
+
 header('Content-Type: application/json');
 
 $authUser = $GLOBALS['auth_user'] ?? null;
 $userId = $authUser['admin_id'] ?? null;
-exit("userId");
 if (!$userId) {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
