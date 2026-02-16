@@ -39,19 +39,19 @@ if (!$userId) {
     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
     exit;
 }
-exit("checkUserPermission");
+
 if (!checkUserPermission($userId, 'orders', 'update')) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'You do not have permission to update orders.']);
     exit;
 }
-exit("checkUserPermission");
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['success' => false, 'message' => 'Method not allowed. Use POST.']);
     exit;
 }
-exit("checkUserPermission");
+
 $input = json_decode(file_get_contents('php://input'), true);
 
 if (json_last_error() !== JSON_ERROR_NONE) {
@@ -59,19 +59,19 @@ if (json_last_error() !== JSON_ERROR_NONE) {
     echo json_encode(['success' => false, 'message' => 'Invalid JSON in request body.']);
     exit;
 }
-exit("checkUserPermission");
+
 if (!isset($input['order_id']) || !is_numeric($input['order_id'])) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'order_id is required and must be a number.']);
     exit;
 }
-exit("checkUserPermission");
+
 if (!isset($input['items']) || !is_array($input['items']) || empty($input['items'])) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'items is required and must be a non-empty array.']);
     exit;
 }
-exit("checkUserPermission");
+
 $order_id = (int)$input['order_id'];
 $items = $input['items'];
 
@@ -95,7 +95,7 @@ foreach ($items as $idx => $item) {
     }
     $seen[$oid] = true;
 }
-exit("checkUserPermission");
+
 try {
     $stmt = $pdo->prepare("SELECT id FROM orders WHERE id = ? LIMIT 1");
     $stmt->execute([$order_id]);
@@ -104,7 +104,7 @@ try {
         echo json_encode(['success' => false, 'message' => 'Order not found.']);
         exit;
     }
-    exit("foreach items");    
+  
     foreach ($items as $item) {
         $order_item_id = (int)$item['order_item_id'];
         $check = $pdo->prepare("SELECT id FROM order_items WHERE id = ? AND order_id = ? LIMIT 1");
@@ -115,14 +115,14 @@ try {
             exit;
         }
     }
-    exit("beginTransaction");
+
     $pdo->beginTransaction();
 
     $insertStmt = $pdo->prepare("
         INSERT INTO sourcing_calls (order_id, order_item_id, type, status)
         VALUES (?, ?, ?, 'pending')
     ");
-    exit("insertStmt");
+
     $rowsInserted = 0;
     foreach ($items as $item) {
         $insertStmt->execute([
@@ -132,9 +132,9 @@ try {
         ]);
         $rowsInserted++;
     }
-    exit("commit");
+
     $pdo->commit();
-    exit("commit");
+
     http_response_code(201);
     echo json_encode([
         'success' => true,
