@@ -1,9 +1,9 @@
 <?php
-
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
 require_once __DIR__ . '/../util/error_logger.php';
 
-// show php error
-ini_set('display_errors', 1);
 
 // CORS headers for subdomain support
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
