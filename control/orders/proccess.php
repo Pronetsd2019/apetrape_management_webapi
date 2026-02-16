@@ -1,27 +1,8 @@
 <?php
-ob_start();
-// On fatal, show error on page
-register_shutdown_function(function () {
-    $e = error_get_last();
-    if (!$e) return;
-    if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_CORE_WARNING, E_COMPILE_ERROR, E_COMPILE_WARNING], true)) return;
-    if (ob_get_level()) ob_clean();
-    http_response_code(200);
-    header('Content-Type: text/html; charset=utf-8');
-    header('X-Error: 1');
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
-    echo '<h1>Fatal error</h1>';
-    echo '<p><strong>' . htmlspecialchars($e['message']) . '</strong></p>';
-    echo '<p>' . htmlspecialchars($e['file']) . ' on line ' . (int)$e['line'] . '</p>';
-    echo '<pre>' . htmlspecialchars(print_r($e, true)) . '</pre></body></html>';
-});
 
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
 require_once __DIR__ . '/../util/error_logger.php';
 
-
+exit("error_logger.php");
 // CORS headers for subdomain support
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
 
