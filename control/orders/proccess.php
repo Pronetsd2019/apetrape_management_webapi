@@ -184,3 +184,5 @@ try {
     echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
     exit;
 }
+
+?>
