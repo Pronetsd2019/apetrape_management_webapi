@@ -1,7 +1,5 @@
 <?php
 
-require_once __DIR__ . '/../util/error_logger.php';
-
 // CORS headers for subdomain support
 $allowedOriginPattern = '/^https:\/\/([a-z0-9-]+)\.apetrape\.com$/i';
 
@@ -19,21 +17,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 /**
  * Sourcing call endpoint
- * POST /orders/proccess.php
+ * POST /orders/process.php
  * Body: { "order_id": <number>, "items": [ { "order_item_id": <number>, "type": "inhouse" | "sourcing" } ] }
  * Inserts one row per item into sourcing_calls (order_id, order_item_id, type, status pending).
  */
 
-try {
 require_once __DIR__ . '/../util/connect.php';
+require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
+
 requireJwtAuth();
 
 header('Content-Type: application/json');
 
 $authUser = $GLOBALS['auth_user'] ?? null;
 $userId = $authUser['admin_id'] ?? null;
+
 if (!$userId) {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unable to identify authenticated user.']);
@@ -149,34 +149,22 @@ try {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    logException('orders_proccess_sourcing', $e);
-    if (ob_get_level()) ob_clean();
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
-    echo '<h1>Database error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
-    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
-    exit;
+    logException('orders_process_sourcing', $e);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'An error occurred while saving sourcing.',
+        'error_details' => $e->getMessage()
+    ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    logException('orders_proccess_sourcing', $e);
-    if (ob_get_level()) ob_clean();
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
-    echo '<h1>Error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
-    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
-    exit;
+    logException('orders_process_sourcing', $e);
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'An error occurred while saving sourcing.'
+    ]);
 }
-} catch (Throwable $e) {
-    if (isset($pdo) && $pdo && $pdo->inTransaction()) {
-        $pdo->rollBack();
-    }
-    logException('orders_proccess_sourcing', $e);
-    if (ob_get_level()) ob_clean();
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Error</title></head><body>';
-    echo '<h1>Error</h1><p><strong>' . htmlspecialchars($e->getMessage()) . '</strong></p>';
-    echo '<p>' . htmlspecialchars($e->getFile()) . ':' . $e->getLine() . '</p><pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre></body></html>';
-    exit;
-}
+?>
