@@ -18,7 +18,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 /**
  * Get sourcing calls
  * GET /sourcing/get_all.php
- * Optional URL params: status, order_id, type (sourcing|inhouse). If none passed, returns all.
+ * Optional URL params: status, order_id, type (sourcing|inhouse).
+ * When status is not passed, only rows with status = 'pending' are returned.
  */
 
 require_once __DIR__ . '/../util/connect.php';
@@ -72,6 +73,8 @@ try {
     if ($status !== null && $status !== '') {
         $sql .= " AND sc.status = ?";
         $params[] = $status;
+    } else {
+        $sql .= " AND sc.status = 'pending'";
     }
 
     if ($order_id !== null) {
