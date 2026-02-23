@@ -28,6 +28,7 @@ require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/order_tracker.php';
 
 requireJwtAuth();
 
@@ -128,6 +129,17 @@ try {
             'message' => 'Assignment not found or you are not assigned to this order.'
         ]);
         exit;
+    }
+
+    if ($status === 'delivered') {
+        $getOrderStmt = $pdo->prepare("SELECT order_id FROM order_assignments WHERE id = ? LIMIT 1");
+        $getOrderStmt->execute([$assignment_id]);
+        $assignRow = $getOrderStmt->fetch(PDO::FETCH_ASSOC);
+        if ($assignRow && !empty($assignRow['order_id'])) {
+            $order_id = (int) $assignRow['order_id'];
+            $pdo->prepare("UPDATE orders SET status = 'delivered', updated_at = NOW() WHERE id = ?")->execute([$order_id]);
+            trackOrderAction($pdo, $order_id, 'Order delivered');
+        }
     }
 
     http_response_code(200);
