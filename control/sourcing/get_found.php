@@ -16,9 +16,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 /**
- * Get sourcing calls with status = 'found'
+ * Get sourcing calls by status (default 'found')
  * GET /sourcing/get_found.php
- * Optional URL params: order_id, type (sourcing|inhouse).
+ * Optional URL params: status (e.g. found, received), order_id, type (sourcing|inhouse).
  */
 
 require_once __DIR__ . '/../util/connect.php';
@@ -52,6 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 try {
+    $statusFilter = isset($_GET['status']) ? trim((string)$_GET['status']) : null;
     $order_id = isset($_GET['order_id']) && is_numeric($_GET['order_id']) ? (int)$_GET['order_id'] : null;
     $type = isset($_GET['type']) ? strtolower(trim($_GET['type'])) : null;
 
@@ -61,12 +62,14 @@ try {
         exit;
     }
 
+    $status = ($statusFilter !== null && $statusFilter !== '') ? $statusFilter : 'found';
+
     $sql = "SELECT sc.id, sc.order_id, sc.order_item_id, sc.type, sc.status, sc.created_at, sc.updated_at,
             oi.name AS item_name, oi.sku AS item_sku, oi.quantity AS item_quantity, oi.price AS item_price
             FROM sourcing_calls sc
             LEFT JOIN order_items oi ON sc.order_item_id = oi.id
-            WHERE sc.status = 'found'";
-    $params = [];
+            WHERE sc.status = ?";
+    $params = [$status];
 
     if ($order_id !== null) {
         $sql .= " AND sc.order_id = ?";
