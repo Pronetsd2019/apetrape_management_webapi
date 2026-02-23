@@ -78,13 +78,18 @@ try {
 
     if (empty($assignedOrderIds)) {
         http_response_code(200);
-        echo json_encode([
+        $emptyPayload = [
             'success' => true,
             'message' => 'Orders retrieved successfully.',
             'current_user_id' => (int) $userId,
             'data' => [],
             'count' => 0
-        ]);
+        ];
+        if ($statusFilter !== null && $statusFilter !== '') {
+            $emptyPayload['status_filter_applied'] = $statusFilter;
+            $emptyPayload['message'] = 'No orders match. Try without ?status= or use ?status=assigned (assignment status in DB may differ).';
+        }
+        echo json_encode($emptyPayload);
         exit;
     }
 
@@ -300,14 +305,18 @@ try {
     }
     unset($order);
 
-    http_response_code(200);
-    echo json_encode([
+    $payload = [
         'success' => true,
         'message' => 'Orders retrieved successfully.',
         'current_user_id' => (int) $userId,
         'data' => $orders,
         'count' => count($orders)
-    ]);
+    ];
+    if ($statusFilter !== null && $statusFilter !== '') {
+        $payload['status_filter_applied'] = $statusFilter;
+    }
+    http_response_code(200);
+    echo json_encode($payload);
 
 } catch (PDOException $e) {
     logException('orders_get_assigned_to_me', $e);
