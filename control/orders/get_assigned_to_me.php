@@ -81,6 +81,7 @@ try {
         echo json_encode([
             'success' => true,
             'message' => 'Orders retrieved successfully.',
+            'current_user_id' => (int) $userId,
             'data' => [],
             'count' => 0
         ]);
@@ -303,6 +304,7 @@ try {
     echo json_encode([
         'success' => true,
         'message' => 'Orders retrieved successfully.',
+        'current_user_id' => (int) $userId,
         'data' => $orders,
         'count' => count($orders)
     ]);
