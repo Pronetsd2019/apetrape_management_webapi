@@ -87,15 +87,15 @@ try {
     foreach ($sourcingRows as $row) {
         $oid = (int)$row['order_id'];
         if (!isset($byOrder[$oid])) {
-            $byOrder[$oid] = ['has_not_found' => false, 'has_sourcing_new_or_pending' => false];
+            $byOrder[$oid] = ['has_not_found' => false, 'has_sourcing_not_received' => false];
         }
         $type = trim((string)($row['type'] ?? ''));
         $status = trim((string)($row['status'] ?? ''));
         if ($status === 'not found') {
             $byOrder[$oid]['has_not_found'] = true;
         }
-        if ($type === 'sourcing' && in_array($status, ['new', 'pending'], true)) {
-            $byOrder[$oid]['has_sourcing_new_or_pending'] = true;
+        if ($type === 'sourcing' && $status !== 'received' && $status !== 'not found') {
+            $byOrder[$oid]['has_sourcing_not_received'] = true;
         }
     }
 
@@ -114,7 +114,7 @@ try {
         if ($info['has_not_found']) {
             $failed[] = $oid;
             $readinessByOrderId[$oid] = 'failed';
-        } elseif ($info['has_sourcing_new_or_pending']) {
+        } elseif ($info['has_sourcing_not_received']) {
             $not_ready[] = $oid;
             $readinessByOrderId[$oid] = 'not_ready';
         } else {
