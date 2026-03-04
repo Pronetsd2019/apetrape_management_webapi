@@ -145,83 +145,19 @@ try {
     @file_put_contents($warehouseLogFile, "[{$ts}] " . json_encode(['event' => 'background_start', 'affected_order_ids' => $affectedOrderIds], JSON_UNESCAPED_SLASHES) . "\n", FILE_APPEND | LOCK_EX);
 
     foreach ($affectedOrderIds as $order_id) {
-        try {
-            $pendingStmt = $pdo->prepare("
-                SELECT COUNT(*) AS cnt FROM sourcing_calls
-                WHERE order_id = ? AND status IN ('pending', 'not found')
-            ");
-            $pendingStmt->execute([$order_id]);
-            $pendingRow = $pendingStmt->fetch(PDO::FETCH_ASSOC);
-            if ((int)($pendingRow['cnt'] ?? 0) > 0) {
-                continue;
-            }
-
-            $existsStmt = $pdo->prepare("
-                SELECT 1 FROM order_track
-                WHERE order_id = ? AND action = 'Order in-transit from Supplier'
-                LIMIT 1
-            ");
-            $existsStmt->execute([$order_id]);
-            if ($existsStmt->fetch()) {
-                continue;
-            }
-
-            trackOrderAction($pdo, $order_id, 'Order in-transit from Supplier');
-
-            $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
-            $orderStmt->execute([$order_id]);
-            $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
-            $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
-            $orderNo = $orderRow ? ($orderRow['order_no'] ?? (string)$order_id) : (string)$order_id;
-
-            if ($orderOwnerUserId <= 0) {
-                continue;
-            }
-
-            $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
-            $prefStmt->execute([$orderOwnerUserId]);
-            $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
-            $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
-
-            if ($pushEnabled) {
-                $notifTitle = 'Order in-transit';
-                $notifBody = "Your order {$orderNo} is in-transit from supplier.";
-                $loggedIds = logUserNotification(
-                    $pdo,
-                    $orderOwnerUserId,
-                    'order_in_transit',
-                    $notifTitle,
-                    $notifBody,
-                    'order',
-                    $order_id,
-                    ['order_id' => (string)$order_id],
-                    'push'
-                );
-                $notifData = [
-                    'route' => 'order',
-                    'order_id' => (string)$order_id,
-                    'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
-                    'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
-                ];
-                sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
-            }
-        } catch (Throwable $e) {
-            logException('sourcing_update_status_in_transit', $e, ['order_id' => $order_id]);
+        // Run warehouse check first so we always log the per-order item check (even if in-transit block would continue)
+        $warehouseLogFile = dirname(__DIR__) . '/logs/warehouse_check.log';
+        $warehouseLogDir = dirname($warehouseLogFile);
+        if (!is_dir($warehouseLogDir)) {
+            @mkdir($warehouseLogDir, 0755, true);
         }
+        $logLine = function ($data) use ($warehouseLogFile) {
+            $ts = date('Y-m-d H:i:s');
+            $entry = "[{$ts}] " . json_encode($data, JSON_UNESCAPED_SLASHES) . "\n";
+            @file_put_contents($warehouseLogFile, $entry, FILE_APPEND | LOCK_EX);
+        };
 
-        // If all items are now received or inhouse, add "Order in Our Warehouse" track and notify
         try {
-            $warehouseLogFile = dirname(__DIR__) . '/logs/warehouse_check.log';
-            $warehouseLogDir = dirname($warehouseLogFile);
-            if (!is_dir($warehouseLogDir)) {
-                @mkdir($warehouseLogDir, 0755, true);
-            }
-            $logLine = function ($data) use ($warehouseLogFile) {
-                $ts = date('Y-m-d H:i:s');
-                $entry = "[{$ts}] " . json_encode($data, JSON_UNESCAPED_SLASHES) . "\n";
-                @file_put_contents($warehouseLogFile, $entry, FILE_APPEND | LOCK_EX);
-            };
-
             $notReceivedStmt = $pdo->prepare("
                 SELECT COUNT(*) AS cnt FROM sourcing_calls
                 WHERE order_id = ? AND type = 'sourcing' AND status != 'received'
@@ -244,28 +180,22 @@ try {
 
             if ($notReceivedCount > 0) {
                 $logLine(['order_id' => $order_id, 'skipped' => 'some sourcing items not yet received']);
-                continue;
-            }
+            } else {
+                $warehouseExistsStmt = $pdo->prepare("
+                    SELECT 1 FROM order_track
+                    WHERE order_id = ? AND action = 'Order in Our Warehouse'
+                    LIMIT 1
+                ");
+                $warehouseExistsStmt->execute([$order_id]);
+                $warehouseAlreadyExists = (bool)$warehouseExistsStmt->fetch();
+                $logLine([
+                    'order_id' => $order_id,
+                    'warehouse_track_already_exists' => $warehouseAlreadyExists
+                ]);
 
-            $warehouseExistsStmt = $pdo->prepare("
-                SELECT 1 FROM order_track
-                WHERE order_id = ? AND action = 'Order in Our Warehouse'
-                LIMIT 1
-            ");
-            $warehouseExistsStmt->execute([$order_id]);
-            $warehouseAlreadyExists = (bool)$warehouseExistsStmt->fetch();
-            $logLine([
-                'order_id' => $order_id,
-                'warehouse_track_already_exists' => $warehouseAlreadyExists
-            ]);
-
-            if ($warehouseAlreadyExists) {
-                $logLine(['order_id' => $order_id, 'skipped' => 'Order in Our Warehouse already in order_track']);
-                continue;
-            }
-
-            trackOrderAction($pdo, $order_id, 'Order in Our Warehouse');
-            $logLine(['order_id' => $order_id, 'action' => 'track added', 'action_text' => 'Order in Our Warehouse']);
+                if (!$warehouseAlreadyExists) {
+                    trackOrderAction($pdo, $order_id, 'Order in Our Warehouse');
+                    $logLine(['order_id' => $order_id, 'action' => 'track added', 'action_text' => 'Order in Our Warehouse']);
 
             $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
             $orderStmt->execute([$order_id]);
@@ -305,11 +235,57 @@ try {
             } else {
                 $logLine(['order_id' => $order_id, 'skipped' => 'order owner user_id <= 0', 'order_owner_user_id' => $orderOwnerUserId]);
             }
+                } else {
+                    $logLine(['order_id' => $order_id, 'skipped' => 'Order in Our Warehouse already in order_track']);
+                }
+            }
         } catch (Throwable $e) {
             logException('sourcing_update_status_warehouse', $e, ['order_id' => $order_id]);
             $ts = date('Y-m-d H:i:s');
             $logFile = dirname(__DIR__) . '/logs/warehouse_check.log';
             @file_put_contents($logFile, "[{$ts}] " . json_encode(['order_id' => $order_id, 'error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()], JSON_UNESCAPED_SLASHES) . "\n", FILE_APPEND | LOCK_EX);
+        }
+
+        // In-transit: if all items sourced/in-house (no pending/not found), add track and notify. Runs regardless of warehouse result.
+        try {
+            $pendingStmt = $pdo->prepare("
+                SELECT COUNT(*) AS cnt FROM sourcing_calls
+                WHERE order_id = ? AND status IN ('pending', 'not found')
+            ");
+            $pendingStmt->execute([$order_id]);
+            $pendingRow = $pendingStmt->fetch(PDO::FETCH_ASSOC);
+            $pendingCount = (int)($pendingRow['cnt'] ?? 0);
+            if ($pendingCount === 0) {
+                $existsStmt = $pdo->prepare("
+                    SELECT 1 FROM order_track
+                    WHERE order_id = ? AND action = 'Order in-transit from Supplier'
+                    LIMIT 1
+                ");
+                $existsStmt->execute([$order_id]);
+                if (!$existsStmt->fetch()) {
+                    trackOrderAction($pdo, $order_id, 'Order in-transit from Supplier');
+                    $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
+                    $orderStmt->execute([$order_id]);
+                    $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
+                    $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
+                    $orderNo = $orderRow ? ($orderRow['order_no'] ?? (string)$order_id) : (string)$order_id;
+                    if ($orderOwnerUserId > 0) {
+                        $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
+                        $prefStmt->execute([$orderOwnerUserId]);
+                        $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+                        $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+                        if ($pushEnabled) {
+                            $notifTitle = 'Order in-transit';
+                            $notifBody = "Your order {$orderNo} is in-transit from supplier.";
+                            $loggedIds = logUserNotification($pdo, $orderOwnerUserId, 'order_in_transit', $notifTitle, $notifBody, 'order', $order_id, ['order_id' => (string)$order_id], 'push');
+                            $notifData = ['route' => 'order', 'order_id' => (string)$order_id, 'notification_id' => (string)($loggedIds['notification_id'] ?? ''), 'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')];
+                            sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            logException('sourcing_update_status_in_transit', $e, ['order_id' => $order_id]);
         }
     }
 
