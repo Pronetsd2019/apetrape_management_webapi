@@ -24,6 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../util/error_logger.php';
  require_once __DIR__ . '/../middleware/auth_middleware.php';
  require_once __DIR__ . '/../util/check_permission.php';
+ require_once __DIR__ . '/../util/order_tracker.php';
+ require_once __DIR__ . '/../util/notification_logger.php';
+ require_once __DIR__ . '/../util/firebase_messaging.php';
  
  // Ensure the request is authenticated
  requireJwtAuth();
@@ -114,8 +117,7 @@ try {
     $result = $updateStmt->execute([$status, $orderNo]);
 
     if ($result && $updateStmt->rowCount() > 0) {
-        http_response_code(200);
-        echo json_encode([
+        $responseBody = [
             'success' => true,
             'message' => 'Order status updated successfully.',
             'data' => [
@@ -123,7 +125,77 @@ try {
                 'status' => $status,
                 'updated_at' => date('Y-m-d H:i:s')
             ]
-        ]);
+        ];
+        http_response_code(200);
+        echo json_encode($responseBody);
+
+        // When order is marked received: background check if all items received or inhouse, then track and notify
+        if (strtolower($status) === 'received') {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            } else {
+                flush();
+            }
+            try {
+                $notReceivedStmt = $pdo->prepare("
+                    SELECT COUNT(*) AS cnt FROM sourcing_calls
+                    WHERE order_id = ? AND type = 'sourcing' AND status != 'received'
+                ");
+                $notReceivedStmt->execute([$orderNo]);
+                $notReceivedRow = $notReceivedStmt->fetch(PDO::FETCH_ASSOC);
+                if ((int)($notReceivedRow['cnt'] ?? 0) > 0) {
+                    // Not all items received yet
+                } else {
+                    $existsStmt = $pdo->prepare("
+                        SELECT 1 FROM order_track
+                        WHERE order_id = ? AND action = 'Order in Our Warehouse'
+                        LIMIT 1
+                    ");
+                    $existsStmt->execute([$orderNo]);
+                    if (!$existsStmt->fetch()) {
+                        trackOrderAction($pdo, $orderNo, 'Order in Our Warehouse');
+
+                        $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
+                        $orderStmt->execute([$orderNo]);
+                        $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
+                        $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
+                        $orderNoStr = $orderRow ? ($orderRow['order_no'] ?? (string)$orderNo) : (string)$orderNo;
+
+                        if ($orderOwnerUserId > 0) {
+                            $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
+                            $prefStmt->execute([$orderOwnerUserId]);
+                            $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+                            $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+
+                            if ($pushEnabled) {
+                                $notifTitle = 'Order in Our Warehouse';
+                                $notifBody = "Your order {$orderNoStr} is now in our warehouse.";
+                                $loggedIds = logUserNotification(
+                                    $pdo,
+                                    $orderOwnerUserId,
+                                    'order_in_warehouse',
+                                    $notifTitle,
+                                    $notifBody,
+                                    'order',
+                                    $orderNo,
+                                    ['order_id' => (string)$orderNo],
+                                    'push'
+                                );
+                                $notifData = [
+                                    'route' => 'order',
+                                    'order_id' => (string)$orderNo,
+                                    'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
+                                    'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
+                                ];
+                                sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable $e) {
+                logException('orders_update_status_warehouse', $e, ['order_id' => $orderNo]);
+            }
+        }
     } else {
         http_response_code(500);
         echo json_encode([
