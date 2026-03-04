@@ -144,10 +144,10 @@ try {
             dcm.id        AS cost_map_id,
             dcm.km,
             dcm.amount,
-            ST_X(dcm.pickup)    AS pickup_lat,
-            ST_Y(dcm.pickup)    AS pickup_lng,
-            ST_X(dcm.delivery)  AS delivery_lat,
-            ST_Y(dcm.delivery)  AS delivery_lng
+            ST_Y(dcm.pickup)    AS pickup_lat,
+            ST_X(dcm.pickup)    AS pickup_lng,
+            ST_Y(dcm.delivery)  AS delivery_lat,
+            ST_X(dcm.delivery)  AS delivery_lng
         FROM delivery_fee df
         JOIN delivery_cost_map dcm ON df.cost_map_id = dcm.id
         WHERE df.order_id IN ($deliveryPlaceholders)
