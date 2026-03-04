@@ -195,19 +195,23 @@ try {
         $pickupFeeRow = $pickupFeeStmt->fetch(PDO::FETCH_ASSOC);
         $pickupFee = (float)($pickupFeeRow['fee'] ?? 0);
 
-        // Full order cost (items + delivery + pickup)
+        // Full order cost (items + delivery + pickup). We require this full amount to be paid
+        // before marking as paid, so delivery (and pickup) fees must be covered and we do not
+        // mark the order as paid if delivery is not paid.
         $orderTotal = $itemsTotal + $deliveryFee + $pickupFee;
 
-        // Determine payment status based on full order cost
+        // Round to 2 decimals to avoid float comparison issues
+        $totalPaid = round($totalPaid, 2);
+        $orderTotal = round($orderTotal, 2);
+
+        // Determine payment status based on full order cost including delivery/pickup (use >= so fully paid after partial payments is detected)
         $payStatus = 'unpaid';
-        if ($totalPaid == 0) {
+        if ($totalPaid <= 0) {
             $payStatus = 'unpaid';
-        } elseif ($totalPaid > 0 && $totalPaid < $orderTotal) {
+        } elseif ($totalPaid >= $orderTotal) {
+            $payStatus = ($totalPaid > $orderTotal) ? 'over paid' : 'paid';
+        } else {
             $payStatus = 'partial paid';
-        } elseif ($totalPaid == $orderTotal) {
-            $payStatus = 'paid';
-        } elseif ($totalPaid > $orderTotal) {
-            $payStatus = 'over paid';
         }
 
         // Update order payment status
