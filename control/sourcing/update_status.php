@@ -200,6 +200,69 @@ try {
         } catch (Throwable $e) {
             logException('sourcing_update_status_in_transit', $e, ['order_id' => $order_id]);
         }
+
+        // If all items are now received or inhouse, add "Order in Our Warehouse" track and notify
+        try {
+            $notReceivedStmt = $pdo->prepare("
+                SELECT COUNT(*) AS cnt FROM sourcing_calls
+                WHERE order_id = ? AND type = 'sourcing' AND status != 'received'
+            ");
+            $notReceivedStmt->execute([$order_id]);
+            $notReceivedRow = $notReceivedStmt->fetch(PDO::FETCH_ASSOC);
+            if ((int)($notReceivedRow['cnt'] ?? 0) > 0) {
+                continue;
+            }
+
+            $warehouseExistsStmt = $pdo->prepare("
+                SELECT 1 FROM order_track
+                WHERE order_id = ? AND action = 'Order in Our Warehouse'
+                LIMIT 1
+            ");
+            $warehouseExistsStmt->execute([$order_id]);
+            if ($warehouseExistsStmt->fetch()) {
+                continue;
+            }
+
+            trackOrderAction($pdo, $order_id, 'Order in Our Warehouse');
+
+            $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
+            $orderStmt->execute([$order_id]);
+            $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
+            $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
+            $orderNoStr = $orderRow ? ($orderRow['order_no'] ?? (string)$order_id) : (string)$order_id;
+
+            if ($orderOwnerUserId > 0) {
+                $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
+                $prefStmt->execute([$orderOwnerUserId]);
+                $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+                $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+
+                if ($pushEnabled) {
+                    $notifTitle = 'Order in Our Warehouse';
+                    $notifBody = "Your order {$orderNoStr} is now in our warehouse.";
+                    $loggedIds = logUserNotification(
+                        $pdo,
+                        $orderOwnerUserId,
+                        'order_in_warehouse',
+                        $notifTitle,
+                        $notifBody,
+                        'order',
+                        $order_id,
+                        ['order_id' => (string)$order_id],
+                        'push'
+                    );
+                    $notifData = [
+                        'route' => 'order',
+                        'order_id' => (string)$order_id,
+                        'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
+                        'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
+                    ];
+                    sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+                }
+            }
+        } catch (Throwable $e) {
+            logException('sourcing_update_status_warehouse', $e, ['order_id' => $order_id]);
+        }
     }
 
 } catch (PDOException $e) {
