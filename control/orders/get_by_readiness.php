@@ -77,7 +77,11 @@ if (empty($requestedBuckets)) {
 }
 
 try {
-    $stmtOrders = $pdo->query("SELECT id FROM orders WHERE status != 'draft'");
+    $stmtOrders = $pdo->query("
+        SELECT id FROM orders o
+        WHERE o.status != 'draft'
+        AND NOT EXISTS (SELECT 1 FROM order_assignments oa WHERE oa.order_id = o.id)
+    ");
     $orderIds = $stmtOrders ? array_column($stmtOrders->fetchAll(PDO::FETCH_ASSOC), 'id') : [];
 
     $stmtSc = $pdo->query("SELECT order_id, type, status FROM sourcing_calls");
