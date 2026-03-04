@@ -130,6 +130,7 @@ try {
         $updateStmt->execute([$order_id]);
         $insertStmt->execute([$order_id, $assigned_to, $userId]);
         trackOrderAction($pdo, $order_id, 'Order assigned for delivery');
+        trackOrderAction($pdo, $order_id, 'Out For Delivery');
         $assignments[] = [
             'order_id' => (int) $order_id,
             'assigned_to' => (int) $assigned_to,
