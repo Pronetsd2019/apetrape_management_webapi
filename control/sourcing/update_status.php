@@ -25,6 +25,9 @@ require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/order_tracker.php';
+require_once __DIR__ . '/../util/notification_logger.php';
+require_once __DIR__ . '/../util/firebase_messaging.php';
 
 requireJwtAuth();
 
@@ -104,8 +107,17 @@ try {
 
     $pdo->commit();
 
-    http_response_code(200);
-    echo json_encode([
+    // Collect affected order_ids for background in-transit check (only if we updated any)
+    $affectedOrderIds = [];
+    if (!empty($updated)) {
+        $updatedIds = array_column($updated, 'id');
+        $placeholders = implode(',', array_fill(0, count($updatedIds), '?'));
+        $orderIdStmt = $pdo->prepare("SELECT DISTINCT order_id FROM sourcing_calls WHERE id IN ($placeholders)");
+        $orderIdStmt->execute($updatedIds);
+        $affectedOrderIds = array_values(array_unique(array_column($orderIdStmt->fetchAll(PDO::FETCH_ASSOC), 'order_id')));
+    }
+
+    $responseBody = [
         'success' => true,
         'message' => count($updated) . ' item(s) updated.',
         'data' => [
@@ -113,7 +125,82 @@ try {
             'updated_count' => count($updated),
             'errors' => $errors
         ]
-    ]);
+    ];
+
+    http_response_code(200);
+    echo json_encode($responseBody);
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        flush();
+    }
+
+    // Background: per affected order, if all items sourced/in-house, add track action and notify user (errors only logged)
+    foreach ($affectedOrderIds as $order_id) {
+        try {
+            $pendingStmt = $pdo->prepare("
+                SELECT COUNT(*) AS cnt FROM sourcing_calls
+                WHERE order_id = ? AND status IN ('pending', 'not found')
+            ");
+            $pendingStmt->execute([$order_id]);
+            $pendingRow = $pendingStmt->fetch(PDO::FETCH_ASSOC);
+            if ((int)($pendingRow['cnt'] ?? 0) > 0) {
+                continue;
+            }
+
+            $existsStmt = $pdo->prepare("
+                SELECT 1 FROM order_track
+                WHERE order_id = ? AND action = 'Order in-transit from Supplier'
+                LIMIT 1
+            ");
+            $existsStmt->execute([$order_id]);
+            if ($existsStmt->fetch()) {
+                continue;
+            }
+
+            trackOrderAction($pdo, $order_id, 'Order in-transit from Supplier');
+
+            $orderStmt = $pdo->prepare("SELECT user_id, order_no FROM orders WHERE id = ? LIMIT 1");
+            $orderStmt->execute([$order_id]);
+            $orderRow = $orderStmt->fetch(PDO::FETCH_ASSOC);
+            $orderOwnerUserId = $orderRow ? (int)($orderRow['user_id'] ?? 0) : 0;
+            $orderNo = $orderRow ? ($orderRow['order_no'] ?? (string)$order_id) : (string)$order_id;
+
+            if ($orderOwnerUserId <= 0) {
+                continue;
+            }
+
+            $prefStmt = $pdo->prepare("SELECT push_notifications FROM user_notification_preferences WHERE user_id = ?");
+            $prefStmt->execute([$orderOwnerUserId]);
+            $prefs = $prefStmt->fetch(PDO::FETCH_ASSOC);
+            $pushEnabled = $prefs ? (int)$prefs['push_notifications'] === 1 : true;
+
+            if ($pushEnabled) {
+                $notifTitle = 'Order in-transit';
+                $notifBody = "Your order {$orderNo} is in-transit from supplier.";
+                $loggedIds = logUserNotification(
+                    $pdo,
+                    $orderOwnerUserId,
+                    'order_in_transit',
+                    $notifTitle,
+                    $notifBody,
+                    'order',
+                    $order_id,
+                    ['order_id' => (string)$order_id],
+                    'push'
+                );
+                $notifData = [
+                    'route' => 'order',
+                    'order_id' => (string)$order_id,
+                    'notification_id' => (string)($loggedIds['notification_id'] ?? ''),
+                    'notification_user_id' => (string)($loggedIds['notification_user_id'] ?? '')
+                ];
+                sendPushNotificationToUser($orderOwnerUserId, $notifTitle, $notifBody, $notifData, null, $pdo);
+            }
+        } catch (Throwable $e) {
+            logException('sourcing_update_status_in_transit', $e, ['order_id' => $order_id]);
+        }
+    }
 
 } catch (PDOException $e) {
     if ($pdo->inTransaction()) {

@@ -64,9 +64,12 @@ try {
     }
 
     $sql = "SELECT sc.id, sc.order_id, sc.order_item_id, sc.type, sc.status, sc.created_at, sc.updated_at,
-            oi.name AS item_name, oi.sku AS item_sku, oi.quantity AS item_quantity, oi.price AS item_price
+            oi.name AS item_name, oi.sku AS item_sku, oi.quantity AS item_quantity, oi.price AS item_price,
+            i.supplier_id AS supplier_id, s.name AS supplier_name
             FROM sourcing_calls sc
             LEFT JOIN order_items oi ON sc.order_item_id = oi.id
+            LEFT JOIN items i ON oi.sku = i.sku
+            LEFT JOIN suppliers s ON i.supplier_id = s.id
             WHERE 1=1";
     $params = [];
 
@@ -105,7 +108,9 @@ try {
             'item_name' => $row['item_name'] ?? null,
             'item_sku' => $row['item_sku'] ?? null,
             'item_quantity' => isset($row['item_quantity']) ? (int)$row['item_quantity'] : null,
-            'item_price' => isset($row['item_price']) ? (float)$row['item_price'] : null
+            'item_price' => isset($row['item_price']) ? (float)$row['item_price'] : null,
+            'supplier_id' => isset($row['supplier_id']) && $row['supplier_id'] !== '' ? (int)$row['supplier_id'] : null,
+            'supplier_name' => $row['supplier_name'] ?? null
         ];
     }, $rows);
 
