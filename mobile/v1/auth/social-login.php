@@ -183,7 +183,7 @@ try {
             // Insert new user (surname is NULL for social login users; activated = true for social sign-up)
             $stmt = $pdo->prepare("
                 INSERT INTO users (name, surname, email, cell, provider, provider_user_id, avatar, status, activated)
-                VALUES (?, NULL, ?, ?, ?, ?, ?, 1, 1)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, 2, 1)
             ");
             $stmt->execute([$name, $email, null, $provider, $provider_user_id, $avatar]);
 

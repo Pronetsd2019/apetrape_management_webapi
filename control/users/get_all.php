@@ -68,6 +68,7 @@ try {
             u.email,
             u.cell,
             u.status,
+            u.activated,
             u.created_at,
             u.updated_at,
             ua.id AS address_id,
