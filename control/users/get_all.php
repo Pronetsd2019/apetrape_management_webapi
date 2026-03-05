@@ -59,7 +59,7 @@ try {
     $search = $_GET['search'] ?? null;
     $email = $_GET['email'] ?? null;
 
-    // Build query
+    // Build query — users plus user_addresses (same table as mobile/v1/address)
     $sql = "
         SELECT
             u.id,
@@ -70,22 +70,25 @@ try {
             u.status,
             u.created_at,
             u.updated_at,
-            ua.id as address_id,
-            ua.street as address_street,
-            ua.plot as address_plot,
-            ua.created_at as address_created_at,
-            ua.updated_at as address_updated_at,
-            c.id as city_id,
-            c.name as city_name,
-            r.id as region_id,
-            r.name as region_name,
-            co.id as country_id,
-            co.name as country_name
+            ua.id AS address_id,
+            ua.place_id,
+            ua.formatted_address,
+            ua.latitude,
+            ua.longitude,
+            ua.street_number,
+            ua.street,
+            ua.sublocality,
+            ua.city,
+            ua.district,
+            ua.region,
+            ua.country,
+            ua.country_code,
+            ua.postal_code,
+            ua.nickname,
+            ua.created_at AS address_created_at,
+            ua.updated_at AS address_updated_at
         FROM users u
-        LEFT JOIN user_address ua ON u.id = ua.user_id
-        LEFT JOIN city c ON ua.city = c.id
-        LEFT JOIN region r ON c.region_id = r.id
-        LEFT JOIN country co ON r.country_id = co.id
+        LEFT JOIN user_addresses ua ON u.id = ua.user_id
     ";
 
     $params = [];
@@ -134,15 +137,26 @@ try {
             ];
         }
 
-        // Add address if it exists
+        // Add address if it exists (same shape as mobile/v1/address/get.php)
         if ($row['address_id']) {
             $users[$userId]['addresses'][] = [
                 'id' => (int)$row['address_id'],
-                'street' => $row['address_street'],
-                'plot' => $row['address_plot'],
-                'city' => $row['city_name'],
-                'region' => $row['region_name'],
-                'country' => $row['country_name'],
+                'place_id' => $row['place_id'],
+                'formatted_address' => $row['formatted_address'],
+                'latitude' => $row['latitude'] !== null ? (float)$row['latitude'] : null,
+                'longitude' => $row['longitude'] !== null ? (float)$row['longitude'] : null,
+                'nickname' => $row['nickname'] ?? null,
+                'address_components' => [
+                    'street_number' => $row['street_number'],
+                    'street' => $row['street'],
+                    'city' => $row['city'],
+                    'sublocality' => $row['sublocality'],
+                    'district' => $row['district'],
+                    'region' => $row['region'],
+                    'country' => $row['country'],
+                    'country_code' => $row['country_code'],
+                    'postal_code' => $row['postal_code']
+                ],
                 'created_at' => $row['address_created_at'],
                 'updated_at' => $row['address_updated_at']
             ];
