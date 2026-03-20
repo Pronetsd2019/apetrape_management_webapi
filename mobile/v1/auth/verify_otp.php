@@ -100,7 +100,7 @@ try {
     $otpId = (int)$row['id'];
 
     $pdo->prepare("UPDATE user_otps SET consumed_at = NOW() WHERE id = ?")->execute([$otpId]);
-    $pdo->prepare("UPDATE users SET activated = 1, status = 2, updated_at = NOW() WHERE id = ?")->execute([$userId]);
+    $pdo->prepare("UPDATE users SET activated = 1, status = 1, updated_at = NOW() WHERE id = ?")->execute([$userId]);
 
     $pdo->commit();
 
