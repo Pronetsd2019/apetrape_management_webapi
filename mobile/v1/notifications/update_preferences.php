@@ -236,7 +236,7 @@ try {
         if ($existingRow) {
             $updateStmt = $pdo->prepare("
                 UPDATE user_fcm_tokens
-                SET fcm_token = ?, platform = ?, updated_at = NOW()
+                SET fcm_token = ?, platform = COALESCE(?, platform), updated_at = NOW()
                 WHERE id = ?
             ");
             $updateStmt->execute([$fcm_token, $platform, $existingRow['id']]);
