@@ -37,17 +37,17 @@ if (file_exists($envFile)) {
     }
 }
 
-// Email configuration - can be overridden by environment variables
+// Email configuration sourced strictly from environment variables
 $emailConfig = [
-    'smtp_host' => $_ENV['SMTP_HOST'] ?? 'smtp.gmail.com',
-    'smtp_port' => (int)($_ENV['SMTP_PORT'] ?? 587),
-    'smtp_secure' => $_ENV['SMTP_SECURE'] ?? 'tls', // 'tls' or 'ssl'
-    'smtp_username' => $_ENV['SMTP_USERNAME'] ?? 'sales@apetrape.com',
-    'smtp_password' => $_ENV['SMTP_PASSWORD'] ?? '',
-    'from_email' => $_ENV['FROM_EMAIL'] ?? 'sales@apetrape.com',
-    'from_name' => $_ENV['FROM_NAME'] ?? 'APE Trape PTY Ltd',
-    'reply_to_email' => $_ENV['REPLY_TO_EMAIL'] ?? 'sales@apetrape.com',
-    'reply_to_name' => $_ENV['REPLY_TO_NAME'] ?? 'APE Trape PTY Ltd',
+    'smtp_host' => $_ENV['SMTP_HOST'] ?? null,
+    'smtp_port' => isset($_ENV['SMTP_PORT']) ? (int)$_ENV['SMTP_PORT'] : null,
+    'smtp_secure' => $_ENV['SMTP_SECURE'] ?? null, // expected: tls or ssl
+    'smtp_username' => $_ENV['SMTP_USERNAME'] ?? null,
+    'smtp_password' => $_ENV['SMTP_PASSWORD'] ?? null,
+    'from_email' => $_ENV['FROM_EMAIL'] ?? null,
+    'from_name' => $_ENV['FROM_NAME'] ?? null,
+    'reply_to_email' => $_ENV['REPLY_TO_EMAIL'] ?? null,
+    'reply_to_name' => $_ENV['REPLY_TO_NAME'] ?? null,
     // Base URL for email images (e.g. https://apetrape.com) - no trailing slash
     'assets_base_url' => rtrim($_ENV['ASSETS_BASE_URL'] ?? $_ENV['APP_URL'] ?? '', '/')
 ];
