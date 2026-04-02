@@ -27,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/auth_audit_logger.php';
 
 header('Content-Type: application/json');
 
@@ -46,8 +47,24 @@ $refresh_token = isset($input['refresh_token']) ? trim($input['refresh_token']) 
 try {
     // If refresh token exists, delete it from database
     if ($refresh_token) {
+        $userId = null;
+        $tokenLookupStmt = $pdo->prepare("SELECT user_id FROM mobile_refresh_tokens WHERE token = ? LIMIT 1");
+        $tokenLookupStmt->execute([$refresh_token]);
+        $tokenRow = $tokenLookupStmt->fetch(PDO::FETCH_ASSOC);
+        if ($tokenRow && isset($tokenRow['user_id'])) {
+            $userId = (int)$tokenRow['user_id'];
+        }
+
         $stmt = $pdo->prepare("DELETE FROM mobile_refresh_tokens WHERE token = ?");
         $stmt->execute([$refresh_token]);
+
+        logAuthAudit($pdo, 'signout', $userId, null, [
+            'token_provided' => true
+        ]);
+    } else {
+        logAuthAudit($pdo, 'signout', null, null, [
+            'token_provided' => false
+        ]);
     }
 
     http_response_code(200);

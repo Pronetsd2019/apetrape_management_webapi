@@ -28,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 require_once __DIR__ . '/../../../control/util/connect.php';
 require_once __DIR__ . '/../../../control/util/jwt.php';
 require_once __DIR__ . '/../../../control/util/error_logger.php';
+require_once __DIR__ . '/../../../control/util/auth_audit_logger.php';
 require_once __DIR__ . '/../../../control/util/otp_store.php';
 require_once __DIR__ . '/../../../control/util/email_sender.php';
 require_once __DIR__ . '/../../../control/util/sms_sender.php';
@@ -113,6 +114,9 @@ try {
 
     // Check if user exists
     if (!$user) {
+        logAuthAudit($pdo, 'login_failed', null, $identifier, [
+            'reason' => 'invalid_identifier'
+        ]);
         logError('mobile_auth_login', 'Login attempt with invalid identifier', [
             'identifier' => $identifier,
             'ip_address' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
@@ -129,6 +133,9 @@ try {
 
     // Check if user account is deactivated (status -2 = self-deactivated)
     if ($user['status'] == -2) {
+        logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+            'reason' => 'account_deactivated'
+        ]);
         logError('mobile_auth_login', 'Login attempt on deactivated account', [
             'user_id' => $user['id'],
             'email' => $user['email'],
@@ -147,6 +154,9 @@ try {
 
     // Check if user account is inactive (status 0 = admin deactivated)
     if ($user['status'] != 1) {
+        logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+            'reason' => 'account_inactive'
+        ]);
         logError('mobile_auth_login', 'Login attempt on inactive account', [
             'user_id' => $user['id'],
             'email' => $user['email'],
@@ -164,6 +174,10 @@ try {
 
     // Check for permanent lockout (stage 3)
     if ($user['lockout_stage'] == LOCKOUT_STAGE_PERMANENT) {
+        logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+            'reason' => 'permanent_lockout',
+            'lockout_stage' => (int)$user['lockout_stage']
+        ]);
         logError('mobile_auth_login', 'Login attempt on permanently locked account', [
             'user_id' => $user['id'],
             'email' => $user['email'],
@@ -184,6 +198,12 @@ try {
         $locked_until = strtotime($user['locked_until']);
         $remaining_seconds = $locked_until - time();
         $remaining_minutes = ceil($remaining_seconds / 60);
+        logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+            'reason' => 'temporary_lockout',
+            'lockout_stage' => (int)$user['lockout_stage'],
+            'locked_until' => $user['locked_until'],
+            'remaining_minutes' => $remaining_minutes
+        ]);
         
         logError('mobile_auth_login', 'Login attempt on locked account', [
             'user_id' => $user['id'],
@@ -246,6 +266,12 @@ try {
         
         // Update failed attempts and lockout status
         if ($lockout_until !== null || $new_lockout_stage == LOCKOUT_STAGE_PERMANENT) {
+            logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+                'reason' => 'password_invalid_account_locked',
+                'failed_attempts' => $new_failed_attempts,
+                'lockout_stage' => (int)$new_lockout_stage,
+                'locked_until' => $lockout_until
+            ]);
             // Lock the account
             $stmt = $pdo->prepare("
                 UPDATE users 
@@ -296,6 +322,12 @@ try {
             } elseif ($lockout_stage == 2) {
                 $remaining_attempts = MAX_FAILED_ATTEMPTS_STAGE_3 - $new_failed_attempts;
             }
+
+            logAuthAudit($pdo, 'login_failed', (int)$user['id'], $identifier, [
+                'reason' => 'password_invalid',
+                'failed_attempts' => $new_failed_attempts,
+                'remaining_attempts' => $remaining_attempts
+            ]);
             
             logError('mobile_auth_login', 'Login attempt with wrong password', [
                 'user_id' => $user['id'],
@@ -348,6 +380,10 @@ try {
     ];
 
     $access_token = generateJWT($token_payload, 60); // 60 minutes = 3600 seconds
+
+    logAuthAudit($pdo, 'login_success', (int)$user['id'], $identifier, [
+        'provider' => $user['provider'] ?? null
+    ]);
 
     // Handle optional FCM token save (best-effort, don't fail login if this fails)
     if (isset($input['fcm_token']) && !empty(trim($input['fcm_token']))) {

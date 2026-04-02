@@ -35,6 +35,119 @@ require_once __DIR__ . '/../../../control/util/error_logger.php';
 
 header('Content-Type: application/json');
 
+/**
+ * Fetch Apple's JWKS (cached on disk).
+ */
+function _getAppleJwks() {
+    $cacheFile = sys_get_temp_dir() . '/apple_jwks_cache.json';
+    $ttlSeconds = 60 * 60; // 1 hour
+
+    if (file_exists($cacheFile)) {
+        $age = time() - filemtime($cacheFile);
+        if ($age >= 0 && $age < $ttlSeconds) {
+            $cached = @file_get_contents($cacheFile);
+            if ($cached) {
+                $decoded = json_decode($cached, true);
+                if (is_array($decoded) && isset($decoded['keys']) && is_array($decoded['keys'])) {
+                    return $decoded;
+                }
+            }
+        }
+    }
+
+    $url = 'https://appleid.apple.com/auth/keys';
+    $jwksRaw = null;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        $jwksRaw = curl_exec($ch);
+        curl_close($ch);
+    } else {
+        $jwksRaw = @file_get_contents($url);
+    }
+
+    if (!$jwksRaw) {
+        throw new Exception('Failed to fetch Apple public keys.');
+    }
+
+    $decoded = json_decode($jwksRaw, true);
+    if (!is_array($decoded) || !isset($decoded['keys']) || !is_array($decoded['keys'])) {
+        throw new Exception('Invalid Apple JWKS response.');
+    }
+
+    @file_put_contents($cacheFile, $jwksRaw);
+    return $decoded;
+}
+
+/**
+ * Verify Apple identity token (id_token) using Apple's JWKS and validate issuer/audience.
+ * Returns decoded claims as an associative array.
+ */
+function verifyAppleIdToken($idToken, $allowedAudiences) {
+    if (!is_string($idToken) || trim($idToken) === '') {
+        throw new Exception('Missing Apple id_token.');
+    }
+    if (!is_array($allowedAudiences) || empty($allowedAudiences)) {
+        throw new Exception('Apple token verification misconfigured: allowed audiences missing.');
+    }
+
+    $jwks = _getAppleJwks();
+
+    // Firebase JWT helper for JWKS parsing (preferred).
+    if (class_exists('\\Firebase\\JWT\\JWK')) {
+        $keySet = \Firebase\JWT\JWK::parseKeySet($jwks);
+
+        $parts = explode('.', $idToken);
+        if (count($parts) < 2) {
+            throw new Exception('Invalid Apple id_token format.');
+        }
+        $headerJson = \Firebase\JWT\JWT::urlsafeB64Decode($parts[0]);
+        $header = json_decode($headerJson, true);
+        $kid = is_array($header) && isset($header['kid']) ? $header['kid'] : null;
+        if (!$kid || !isset($keySet[$kid])) {
+            throw new Exception('Apple public key not found for token kid.');
+        }
+
+        $decodedObj = \Firebase\JWT\JWT::decode($idToken, $keySet[$kid]);
+        $claims = (array)$decodedObj;
+    } else {
+        // Fallback: no JWK parser available
+        throw new Exception('Apple token verification unavailable (missing JWK parser).');
+    }
+
+    // Validate issuer
+    if (!isset($claims['iss']) || $claims['iss'] !== 'https://appleid.apple.com') {
+        throw new Exception('Invalid Apple token issuer.');
+    }
+
+    // Validate audience
+    $aud = $claims['aud'] ?? null;
+    $audOk = false;
+    if (is_string($aud)) {
+        $audOk = in_array($aud, $allowedAudiences, true);
+    } elseif (is_array($aud)) {
+        foreach ($aud as $a) {
+            if (is_string($a) && in_array($a, $allowedAudiences, true)) {
+                $audOk = true;
+                break;
+            }
+        }
+    }
+    if (!$audOk) {
+        throw new Exception('Invalid Apple token audience.');
+    }
+
+    if (!isset($claims['sub']) || !is_string($claims['sub']) || trim($claims['sub']) === '') {
+        throw new Exception('Apple token missing subject.');
+    }
+
+    return $claims;
+}
+
 // Only allow POST method
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -45,20 +158,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Get JSON input
 $input = json_decode(file_get_contents('php://input'), true);
 
-// Validate required fields
-if (!isset($input['provider']) || !isset($input['provider_user_id'])) {
+// Validate required fields (provider always required; provider_user_id may be derived for Apple from id_token)
+if (!isset($input['provider'])) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
         'error' => 'Invalid request',
-        'message' => 'Provider and provider_user_id are required.',
+        'message' => 'Provider is required.',
         'input' => $input
     ]);
     exit;
 }
 
 $provider = strtolower(trim($input['provider']));
-$provider_user_id = trim($input['provider_user_id']);
+$provider_user_id = isset($input['provider_user_id']) ? trim($input['provider_user_id']) : '';
 $access_token = isset($input['access_token']) ? trim($input['access_token']) : null;
 $id_token = isset($input['id_token']) ? trim($input['id_token']) : null;
 $email = isset($input['email']) ? trim($input['email']) : null;
@@ -66,7 +179,7 @@ $name = isset($input['name']) ? trim($input['name']) : null;
 $avatar = isset($input['avatar']) ? trim($input['avatar']) : null;
 
 // Validate provider
-$allowedProviders = ['facebook', 'google', 'instagram'];
+$allowedProviders = ['facebook', 'google', 'instagram', 'apple'];
 if (!in_array($provider, $allowedProviders)) {
     http_response_code(400);
     echo json_encode([
@@ -75,6 +188,19 @@ if (!in_array($provider, $allowedProviders)) {
         'message' => 'Provider must be one of: ' . implode(', ', $allowedProviders)
     ]);
     exit;
+}
+
+// Apple requires id_token and provider_user_id will be derived from it (sub).
+if ($provider === 'apple') {
+    if (!$id_token) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Invalid token',
+            'message' => 'id_token is required for Apple authentication.'
+        ]);
+        exit;
+    }
 }
 
 // Validate access_token or id_token (at least one required)
@@ -100,12 +226,33 @@ if ($provider === 'google' && !$id_token) {
 }
 
 try {
-    // TODO: Verify token with provider API
-    // For now, we'll trust the token structure and proceed
-    // Full verification should be implemented:
-    // - Google: Verify id_token with Google's tokeninfo endpoint
-    // - Facebook: Verify access_token with Facebook's debug endpoint
-    // - Instagram: Verify access_token with Instagram's API
+    // Provider verification
+    // - Apple: Verify id_token using Apple JWKS (required)
+    // - Google/Facebook/Instagram: still TODO (legacy behavior)
+    if ($provider === 'apple') {
+        // iOS bundle id from app: com.apetrape
+        $appleAllowedAudiences = ['com.apetrape'];
+        $appleClaims = verifyAppleIdToken($id_token, $appleAllowedAudiences);
+
+        // Override provider_user_id using verified token subject
+        $provider_user_id = trim((string)$appleClaims['sub']);
+
+        // If token contains email and client didn't provide it, use it
+        if ((!$email || trim($email) === '') && isset($appleClaims['email']) && is_string($appleClaims['email'])) {
+            $email = trim($appleClaims['email']);
+        }
+    }
+
+    // Ensure provider_user_id is present after Apple derivation or client-supplied values.
+    if (!$provider_user_id) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'error' => 'Invalid request',
+            'message' => 'provider_user_id is required.',
+        ]);
+        exit;
+    }
     
     // Look up user by provider_user_id and provider
     $stmt = $pdo->prepare("
