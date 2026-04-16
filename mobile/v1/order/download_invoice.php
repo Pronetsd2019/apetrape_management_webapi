@@ -78,15 +78,18 @@ try {
 
     $order_id = (int)$_GET['order_id'];
 
-    // Fetch order - verify ownership
+    // Fetch order - verify ownership (pickup uses pickup_point FK + pickup_points for display)
     $stmt = $pdo->prepare("
         SELECT 
-            id, user_id, order_no, status, 
-            confirm_date, pay_method, pay_status,
-            delivery_method, delivery_address, pickup_address, delivery_date,
-            created_at, updated_at
-        FROM orders
-        WHERE id = ? AND user_id = ? AND status != 'deleted'
+            o.id, o.user_id, o.order_no, o.status,
+            o.confirm_date, o.pay_method, o.pay_status,
+            o.delivery_method, o.delivery_address, o.pickup_point, o.delivery_date,
+            o.created_at, o.updated_at,
+            pp.name AS pickup_point_name,
+            pp.address AS pickup_point_address
+        FROM orders o
+        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
+        WHERE o.id = ? AND o.user_id = ? AND o.status != 'deleted'
         LIMIT 1
     ");
     $stmt->execute([$order_id, $user_id]);
@@ -202,8 +205,8 @@ try {
 EOD;
     $pdf->writeHTML($htmlCustomer, true, false, false, false, '');
     
-    // Delivery info
-    if ($order['delivery_method'] && $order['delivery_address']) {
+    // Delivery or pickup info
+    if ($order['delivery_method'] === 'delivery' && $order['delivery_address']) {
         $pdf->Ln(3);
         $deliveryMethod = htmlspecialchars(ucfirst($order['delivery_method']));
         $deliveryAddress = htmlspecialchars($order['delivery_address']);
@@ -212,6 +215,21 @@ EOD;
 <b>Delivery Address:</b> {$deliveryAddress}
 EOD;
         $pdf->writeHTML($htmlDelivery, true, false, false, false, '');
+    } elseif ($order['delivery_method'] === 'pickup') {
+        $pdf->Ln(3);
+        $deliveryMethod = htmlspecialchars(ucfirst($order['delivery_method']));
+        $htmlPickup = '<b>Delivery Method:</b> ' . $deliveryMethod . '<br/>';
+        if (!empty($order['pickup_point_name']) || !empty($order['pickup_point_address'])) {
+            if (!empty($order['pickup_point_name'])) {
+                $htmlPickup .= '<b>Pickup Point:</b> ' . htmlspecialchars($order['pickup_point_name']) . '<br/>';
+            }
+            if (!empty($order['pickup_point_address'])) {
+                $htmlPickup .= '<b>Address:</b> ' . htmlspecialchars($order['pickup_point_address']);
+            }
+        } elseif (!empty($order['pickup_point'])) {
+            $htmlPickup .= '<b>Pickup Point ID:</b> ' . htmlspecialchars((string)$order['pickup_point']);
+        }
+        $pdf->writeHTML($htmlPickup, true, false, false, false, '');
     }
     
     $pdf->Ln(5);

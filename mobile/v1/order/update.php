@@ -26,8 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  * Body: {
  *   "order_id": 123,
  *   "delivery_method": "pickup|delivery", // optional
- *   "delivery_address": "Address string", // optional
- *   "pickup_address": "Address string", // optional
+ *   "delivery_address": "Address string", // optional (required when setting delivery_method to delivery)
+ *   "pickup_point_id": 2, // optional integer — same as create order; required when setting delivery_method to pickup
  *   "pay_method": "cash|card|bank_transfer" // optional
  * }
  * Requires JWT authentication - updates user's order details
@@ -83,7 +83,9 @@ if (!$order_id) {
 // Optional fields to update
 $delivery_method = $input['delivery_method'] ?? null;
 $delivery_address = $input['delivery_address'] ?? null;
-$pickup_address = $input['pickup_address'] ?? null;
+$pickup_point_id = isset($input['pickup_point_id']) && is_numeric($input['pickup_point_id'])
+    ? (int)$input['pickup_point_id']
+    : null;
 $pay_method = $input['pay_method'] ?? null;
 
 $errors = [];
@@ -103,8 +105,8 @@ if ($delivery_method === 'delivery' && !$delivery_address && !isset($input['deli
     $errors[] = 'delivery_address is required when delivery_method is "delivery"';
 }
 
-if ($delivery_method === 'pickup' && !$pickup_address && !isset($input['pickup_address'])) {
-    $errors[] = 'pickup_address is required when delivery_method is "pickup"';
+if ($delivery_method === 'pickup' && $pickup_point_id === null) {
+    $errors[] = 'pickup_point_id is required when delivery_method is "pickup"';
 }
 
 if (!empty($errors)) {
@@ -122,7 +124,7 @@ try {
     $checkStmt = $pdo->prepare("
         SELECT
             o.id, o.status, o.delivery_method, o.delivery_address,
-            o.pickup_address, o.pay_method
+            o.pickup_point, o.pay_method
         FROM orders o
         WHERE o.id = ? AND o.user_id = ?
     ");
@@ -148,6 +150,21 @@ try {
         exit;
     }
 
+    if ($pickup_point_id !== null) {
+        $ppStmt = $pdo->prepare("
+            SELECT id FROM pickup_points WHERE id = ? AND status = 1 LIMIT 1
+        ");
+        $ppStmt->execute([$pickup_point_id]);
+        if (!$ppStmt->fetch()) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Invalid or inactive pickup_point_id.'
+            ]);
+            exit;
+        }
+    }
+
     // Build update query dynamically
     $updateFields = [];
     $params = [];
@@ -162,9 +179,9 @@ try {
         $params[] = $delivery_address;
     }
 
-    if ($pickup_address !== null) {
-        $updateFields[] = 'pickup_address = ?';
-        $params[] = $pickup_address;
+    if ($pickup_point_id !== null) {
+        $updateFields[] = 'pickup_point = ?';
+        $params[] = $pickup_point_id;
     }
 
     if ($pay_method !== null) {
@@ -197,13 +214,20 @@ try {
     // Track order update
     trackOrderAction($pdo, $order_id, 'updated');
 
-    // Get updated order
+    // Get updated order (pickup details via pickup_points, same shape as get_by_id)
     $getOrderStmt = $pdo->prepare("
         SELECT
             o.id, o.user_id, o.status, o.created_at, o.updated_at, o.order_no,
             o.confirm_date, o.pay_method, o.pay_status, o.delivery_method,
-            o.delivery_address, o.pickup_address, o.delivery_date
+            o.delivery_address, o.pickup_point, o.delivery_date,
+            pp.id AS pickup_point_id,
+            pp.name AS pickup_point_name,
+            pp.address AS pickup_point_address,
+            pp.entry AS pickup_point_entry,
+            pp.status AS pickup_point_status,
+            pp.fee AS pickup_point_fee
         FROM orders o
+        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
         WHERE o.id = ?
     ");
     $getOrderStmt->execute([$order_id]);
@@ -264,6 +288,18 @@ try {
     $total_quantity = array_sum(array_column($orderItems, 'quantity'));
     $total_amount = array_sum(array_column($orderItems, 'total'));
 
+    $pickup_point_data = null;
+    if (!empty($updatedOrder['pickup_point'])) {
+        $pickup_point_data = [
+            'id' => (int)$updatedOrder['pickup_point_id'],
+            'name' => $updatedOrder['pickup_point_name'],
+            'address' => $updatedOrder['pickup_point_address'],
+            'entry' => $updatedOrder['pickup_point_entry'],
+            'status' => $updatedOrder['pickup_point_status'],
+            'fee' => $updatedOrder['pickup_point_fee'] ? round((float)$updatedOrder['pickup_point_fee'], 2) : null
+        ];
+    }
+
     $formatted_order = [
         'id' => (int)$updatedOrder['id'],
         'user_id' => (int)$updatedOrder['user_id'],
@@ -274,7 +310,7 @@ try {
         'pay_status' => $updatedOrder['pay_status'],
         'delivery_method' => $updatedOrder['delivery_method'],
         'delivery_address' => $updatedOrder['delivery_address'],
-        'pickup_address' => $updatedOrder['pickup_address'],
+        'pickup_point' => $pickup_point_data,
         'delivery_date' => $updatedOrder['delivery_date'],
         'created_at' => $updatedOrder['created_at'],
         'updated_at' => $updatedOrder['updated_at'],
