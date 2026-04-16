@@ -7,7 +7,7 @@ Add the following fields to the existing `users` table:
 ```sql
 ALTER TABLE users 
 ADD COLUMN password_hash VARCHAR(255) NULL AFTER cell,
-ADD COLUMN provider ENUM('email', 'facebook', 'google', 'instagram') DEFAULT 'email' AFTER password_hash,
+ADD COLUMN provider ENUM('email', 'facebook', 'google', 'instagram', 'apple') DEFAULT 'email' AFTER password_hash,
 ADD COLUMN provider_user_id VARCHAR(255) NULL AFTER provider,
 ADD COLUMN avatar VARCHAR(500) NULL AFTER provider_user_id,
 ADD COLUMN failed_attempts INT DEFAULT 0 AFTER avatar,
