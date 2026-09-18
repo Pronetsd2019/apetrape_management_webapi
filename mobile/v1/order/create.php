@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
  *   "delivery_method": "pickup|delivery",
  *   "delivery_address": "Address string (if delivery)",
  *   "pickup_point_id": 2 (integer - if pickup),
- *   "pay_method": "cash|card|bank_transfer",
+ *   "pay_method": "peach|eft|momo|emali|ewallet|cash|card|bank_transfer",
  *   "cost_map_id": 4 (optional - from delivery_cost_map),
  *   "delivery_fee_id": null (optional - if null and cost_map_id provided, inserts into delivery_fee)
  * }
@@ -89,6 +89,14 @@ if (!$delivery_method) {
 
 if (!$pay_method) {
     $errors[] = 'pay_method is required';
+} else {
+    $allowedPayMethods = [
+        'peach', 'eft', 'momo', 'emali', 'ewallet',
+        'cash', 'card', 'bank_transfer', 'delivery',
+    ];
+    if (!in_array($pay_method, $allowedPayMethods, true)) {
+        $errors[] = 'pay_method is not supported';
+    }
 }
 
 if ($delivery_method === 'delivery' && !$delivery_address) {
