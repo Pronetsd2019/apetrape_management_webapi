@@ -57,7 +57,7 @@ if (stripos($contentType, 'application/json') !== false) {
     $decoded = json_decode($rawBody, true);
     $payload = is_array($decoded) ? $decoded : [];
 } else {
-    parse_str($rawBody, $payload);
+    $payload = peachParseFormBody($rawBody);
     if (empty($payload) && !empty($_POST)) {
         $payload = $_POST;
     }
@@ -78,6 +78,7 @@ $transactionId = $payload['id']
     ?? $payload['transactionId']
     ?? $payload['uniqueId']
     ?? null;
+$registrationId = $payload['registrationId'] ?? null;
 
 // Determine success from result code (Peach success codes typically start with 000.000 or 000.100)
 $isSuccess = false;
@@ -118,6 +119,28 @@ try {
     if ($checkoutId) {
         $upd = $pdo->prepare("UPDATE peach_checkouts SET status = ?, updated_at = NOW() WHERE checkout_id = ?");
         $upd->execute([$newStatus, $checkoutId]);
+    }
+
+    if ($isSuccess && $orderId && is_string($registrationId) && $registrationId !== '' && peachTokenisationEnabled()) {
+        try {
+            $ownerStmt = $pdo->prepare("SELECT user_id FROM orders WHERE id = ? LIMIT 1");
+            $ownerStmt->execute([$orderId]);
+            $ownerUserId = (int)($ownerStmt->fetch(PDO::FETCH_ASSOC)['user_id'] ?? 0);
+            if ($ownerUserId > 0) {
+                savePeachCardToken(
+                    $pdo,
+                    $ownerUserId,
+                    $registrationId,
+                    $payload['paymentBrand'] ?? null,
+                    $payload['card.last4Digits'] ?? null,
+                    $payload['card.expiryMonth'] ?? null,
+                    $payload['card.expiryYear'] ?? null
+                );
+            }
+        } catch (Throwable $e) {
+            // Never fail the payment because a card could not be saved.
+            logException('peach_webhook_save_card', $e);
+        }
     }
 
     if ($isSuccess && $orderId && $transactionId) {

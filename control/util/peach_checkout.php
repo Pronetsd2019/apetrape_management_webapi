@@ -63,6 +63,40 @@ function peachCurrency(): string
     return strtoupper(peachEnv('PEACH_CURRENCY', 'ZAR'));
 }
 
+function peachTokenisationEnabled(): bool
+{
+    return peachEnv('PEACH_TOKENISATION', '1') === '1';
+}
+
+function peachRequireCvvForSavedCards(): bool
+{
+    return peachEnv('PEACH_REQUIRE_CVV', '0') === '1';
+}
+
+/**
+ * Parse an application/x-www-form-urlencoded body keeping dotted keys intact.
+ * parse_str() rewrites "result.code" to "result_code", which breaks Peach payloads.
+ */
+function peachParseFormBody(string $rawBody): array
+{
+    $payload = [];
+    if ($rawBody === '') {
+        return $payload;
+    }
+    foreach (explode('&', $rawBody) as $pair) {
+        if ($pair === '') {
+            continue;
+        }
+        $parts = explode('=', $pair, 2);
+        $key = urldecode($parts[0]);
+        if ($key === '') {
+            continue;
+        }
+        $payload[$key] = isset($parts[1]) ? urldecode($parts[1]) : '';
+    }
+    return $payload;
+}
+
 /**
  * OAuth access token with simple file cache.
  */
@@ -140,7 +174,9 @@ function peachGenerateNonce(): string
  *   shopperResultUrl: string,
  *   notificationUrl?: string,
  *   currency?: string,
- *   paymentType?: string
+ *   paymentType?: string,
+ *   cardTokens?: string[],
+ *   customer?: array{merchantCustomerId?: string, givenName?: string, surname?: string, email?: string}
  * } $params
  */
 function createPeachCheckout(array $params): array
@@ -163,6 +199,39 @@ function createPeachCheckout(array $params): array
 
     if (!empty($params['notificationUrl'])) {
         $body['notificationUrl'] = $params['notificationUrl'];
+    }
+
+    if (peachTokenisationEnabled()) {
+        // Customer opts in via Peach's "save card" checkbox, which covers consent.
+        $body['allowStoringDetails'] = true;
+
+        $cardTokens = array_values(array_filter(
+            $params['cardTokens'] ?? [],
+            static fn($t) => is_string($t) && $t !== ''
+        ));
+        if ($cardTokens) {
+            $body['cardTokens'] = $cardTokens;
+            $body['standingInstruction'] = ['type' => 'UNSCHEDULED', 'mode' => 'REPEATED'];
+        } else {
+            $body['standingInstruction'] = ['type' => 'UNSCHEDULED', 'mode' => 'INITIAL'];
+        }
+    }
+
+    $customer = array_filter(
+        $params['customer'] ?? [],
+        static fn($v) => is_string($v) && trim($v) !== ''
+    );
+    // Peach requires givenName + surname whenever any customer field is sent.
+    if (!empty($customer['givenName']) && !empty($customer['surname'])) {
+        $body['customer'] = [
+            'merchantCustomerId' => substr((string)($customer['merchantCustomerId'] ?? ''), 0, 48),
+            'givenName' => mb_substr($customer['givenName'], 0, 48),
+            'surname' => mb_substr($customer['surname'], 0, 48),
+        ];
+        if (!empty($customer['email']) && filter_var($customer['email'], FILTER_VALIDATE_EMAIL)) {
+            $body['customer']['email'] = mb_substr($customer['email'], 0, 128);
+        }
+        $body['customer'] = array_filter($body['customer'], static fn($v) => $v !== '');
     }
 
     $url = peachCheckoutBaseUrl() . '/v2/checkout';
@@ -275,6 +344,128 @@ function ensurePeachCheckoutsTable(PDO $pdo): void
             KEY idx_peach_order_id (order_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+}
+
+/**
+ * Ensure peach_saved_cards table exists (idempotent).
+ * Stores Peach card tokens only — never card numbers.
+ */
+function ensurePeachSavedCardsTable(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS peach_saved_cards (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            registration_id VARCHAR(64) NOT NULL,
+            brand VARCHAR(32) NULL,
+            last4 VARCHAR(4) NULL,
+            expiry_month VARCHAR(2) NULL,
+            expiry_year VARCHAR(4) NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            UNIQUE KEY uk_peach_registration_id (registration_id),
+            KEY idx_peach_saved_cards_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+/**
+ * Card tokens belonging to a user, skipping cards that have already expired.
+ *
+ * @return string[]
+ */
+function getPeachSavedCardTokens(PDO $pdo, int $userId): array
+{
+    if ($userId <= 0) {
+        return [];
+    }
+    ensurePeachSavedCardsTable($pdo);
+
+    $stmt = $pdo->prepare("
+        SELECT registration_id, expiry_month, expiry_year
+        FROM peach_saved_cards
+        WHERE user_id = ?
+        ORDER BY updated_at DESC
+    ");
+    $stmt->execute([$userId]);
+
+    $currentYear = (int)date('Y');
+    $currentMonth = (int)date('n');
+    $tokens = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $year = (int)($row['expiry_year'] ?? 0);
+        $month = (int)($row['expiry_month'] ?? 0);
+        if ($year > 0 && $year < 100) {
+            $year += 2000;
+        }
+        if ($year > 0 && $month > 0
+            && ($year < $currentYear || ($year === $currentYear && $month < $currentMonth))
+        ) {
+            continue;
+        }
+        $tokens[] = (string)$row['registration_id'];
+    }
+    return $tokens;
+}
+
+/**
+ * Save (or refresh) a card token for a user. A token already linked to a
+ * different user is never reassigned.
+ */
+function savePeachCardToken(
+    PDO $pdo,
+    int $userId,
+    string $registrationId,
+    ?string $brand = null,
+    ?string $last4 = null,
+    ?string $expiryMonth = null,
+    ?string $expiryYear = null
+): bool {
+    if ($userId <= 0 || !preg_match('/^[a-zA-Z0-9]{16,64}$/', $registrationId)) {
+        return false;
+    }
+    ensurePeachSavedCardsTable($pdo);
+
+    $existingStmt = $pdo->prepare("SELECT user_id FROM peach_saved_cards WHERE registration_id = ? LIMIT 1");
+    $existingStmt->execute([$registrationId]);
+    $existing = $existingStmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($existing) {
+        if ((int)$existing['user_id'] !== $userId) {
+            error_log('Peach token ownership mismatch for registration ' . $registrationId);
+            return false;
+        }
+        $pdo->prepare("UPDATE peach_saved_cards SET updated_at = NOW() WHERE registration_id = ?")
+            ->execute([$registrationId]);
+        return true;
+    }
+
+    $insert = $pdo->prepare("
+        INSERT INTO peach_saved_cards
+            (user_id, registration_id, brand, last4, expiry_month, expiry_year, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ");
+    $insert->execute([
+        $userId,
+        $registrationId,
+        $brand !== null ? substr($brand, 0, 32) : null,
+        $last4 !== null ? substr(preg_replace('/\D/', '', $last4), -4) : null,
+        $expiryMonth !== null ? substr(preg_replace('/\D/', '', $expiryMonth), 0, 2) : null,
+        $expiryYear !== null ? substr(preg_replace('/\D/', '', $expiryYear), 0, 4) : null,
+    ]);
+    return true;
+}
+
+function removePeachCardToken(PDO $pdo, int $userId, string $registrationId): bool
+{
+    if ($userId <= 0 || $registrationId === '') {
+        return false;
+    }
+    ensurePeachSavedCardsTable($pdo);
+
+    $stmt = $pdo->prepare("DELETE FROM peach_saved_cards WHERE user_id = ? AND registration_id = ?");
+    $stmt->execute([$userId, $registrationId]);
+    return $stmt->rowCount() > 0;
 }
 
 /**

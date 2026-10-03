@@ -94,6 +94,24 @@ try {
                     : (float)$checkout['amount'];
                 $ref = $checkout['merchant_transaction_id'] ?? ('peach-' . $checkout['checkout_id']);
                 $recorded = recordPeachOrderPayment($pdo, $orderId, (string)$txId, (string)$ref, $amount);
+
+                $registrationId = $peachStatus['registrationId'] ?? null;
+                if (is_string($registrationId) && $registrationId !== '' && peachTokenisationEnabled()) {
+                    try {
+                        $card = is_array($peachStatus['card'] ?? null) ? $peachStatus['card'] : [];
+                        savePeachCardToken(
+                            $pdo,
+                            $user_id,
+                            $registrationId,
+                            $peachStatus['paymentBrand'] ?? null,
+                            $card['last4Digits'] ?? ($peachStatus['card.last4Digits'] ?? null),
+                            $card['expiryMonth'] ?? ($peachStatus['card.expiryMonth'] ?? null),
+                            $card['expiryYear'] ?? ($peachStatus['card.expiryYear'] ?? null)
+                        );
+                    } catch (Throwable $e) {
+                        error_log('Peach status save card: ' . $e->getMessage());
+                    }
+                }
                 $payStatus = strtolower((string)$recorded['pay_status']);
                 $isPaid = in_array($payStatus, ['paid', 'over paid'], true);
                 $pdo->prepare("UPDATE peach_checkouts SET status = 'successful', updated_at = NOW() WHERE checkout_id = ?")

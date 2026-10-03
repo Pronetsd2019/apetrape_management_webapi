@@ -70,6 +70,19 @@ header('Cache-Control: no-store');
       var checkoutId = <?php echo json_encode($checkoutId); ?>;
       var resultBase = <?php echo json_encode(peachEmbedBaseUrl() . '/mobile/v1/payment/result.php'); ?>;
       var orderQs = <?php echo json_encode($orderId ? ('order_id=' . (int)$orderId) : ''); ?>;
+      var removeCardUrl = <?php echo json_encode(peachEmbedBaseUrl() . '/mobile/v1/payment/remove_card.php'); ?>;
+      var requireCvv = <?php echo peachRequireCvvForSavedCards() ? 'true' : 'false'; ?>;
+
+      function removeCard(token) {
+        return fetch(removeCardUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ checkoutId: checkoutId, registrationId: token })
+        })
+          .then(function (res) { return res.ok ? res.json() : { success: false }; })
+          .then(function (data) { return !!(data && data.success); })
+          .catch(function () { return false; });
+      }
 
       function go(status) {
         var qs = 'status=' + encodeURIComponent(status);
@@ -86,10 +99,21 @@ header('Cache-Control: no-store');
         var checkout = Checkout.initiate({
           key: entityId,
           checkoutId: checkoutId,
-          events: {
+          eventHandlers: {
             onCompleted: function () { go('completed'); },
             onCancelled: function () { go('cancelled'); },
-            onExpired: function () { go('expired'); }
+            onExpired: function () { go('expired'); },
+            onRemoveCard: removeCard
+          },
+          customisations: {
+            card: {
+              headingText: {
+                savedCards: 'Pay with a saved card or add a new one.'
+              },
+              registrations: {
+                requireCvv: requireCvv
+              }
+            }
           }
         });
         checkout.render('#payment-form');

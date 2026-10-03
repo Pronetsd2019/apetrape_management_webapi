@@ -140,11 +140,34 @@ try {
         $merchantTxId = substr('AP' . $orderId . bin2hex(random_bytes(2)), 0, 16);
     }
 
+    // Only this user's own tokens may ever be offered as saved cards.
+    $cardTokens = [];
+    $customer = [];
+    if (peachTokenisationEnabled()) {
+        try {
+            $cardTokens = getPeachSavedCardTokens($pdo, $user_id);
+        } catch (Throwable $e) {
+            logException('payment_create_checkout_saved_cards', $e);
+        }
+
+        $userStmt = $pdo->prepare("SELECT name, surname, email FROM users WHERE id = ? LIMIT 1");
+        $userStmt->execute([$user_id]);
+        $userRow = $userStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        $customer = [
+            'merchantCustomerId' => (string)$user_id,
+            'givenName' => trim((string)($userRow['name'] ?? '')),
+            'surname' => trim((string)($userRow['surname'] ?? '')),
+            'email' => trim((string)($userRow['email'] ?? '')),
+        ];
+    }
+
     $peachResponse = createPeachCheckout([
         'amount' => $amount,
         'merchantTransactionId' => $merchantTxId,
         'shopperResultUrl' => $shopperResultUrl,
         'notificationUrl' => $notificationUrl,
+        'cardTokens' => $cardTokens,
+        'customer' => $customer,
     ]);
 
     $checkoutId = (string)$peachResponse['checkoutId'];

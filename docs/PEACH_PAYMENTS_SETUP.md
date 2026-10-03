@@ -44,7 +44,18 @@ For live: switch auth/checkout URLs to production hosts and unset skip verify.
 
 ## DB
 
-Run `migrations/peach_checkouts.sql` once (or rely on auto-create in `ensurePeachCheckoutsTable`).
+Run `migrations/peach_checkouts.sql` and `migrations/peach_saved_cards.sql` once (or rely on auto-create in `ensurePeachCheckoutsTable` / `ensurePeachSavedCardsTable`).
+
+## Saved cards (tokenisation)
+
+Controlled by `PEACH_TOKENISATION` (default `1`) and `PEACH_REQUIRE_CVV` (default `0`).
+
+1. `create_checkout.php` sends `allowStoringDetails=true`, so Peach shows a "save card" checkbox (customer consent).
+2. On a successful payment where the customer ticked it, the webhook (or `status.php` recovery) stores the `registrationId` in `peach_saved_cards` against the order's user. Only the token, brand, last 4 digits and expiry are stored — never the card number.
+3. Next checkout, the user's non-expired tokens are sent as `cardTokens`, plus `customer.merchantCustomerId` = user id. Embedded Checkout lists the saved cards.
+4. Removing a card inside checkout calls `remove_card.php` via `onRemoveCard`. It only deletes a token owned by the user of an open checkout created in the last 60 minutes.
+
+Ask Peach support to confirm tokenisation / card registrations are enabled on your entity before going live.
 
 ## Test plan
 
@@ -54,6 +65,10 @@ Run `migrations/peach_checkouts.sql` once (or rely on auto-create in `ensurePeac
 | Cancel / close WebView | Order stays `pending`; offline methods still work |
 | Replay webhook | No duplicate `payments` rows (idempotent `transaction_id`) |
 | Offline EFT | Same instruction screens as before |
+| Pay with "save card" ticked | Row added to `peach_saved_cards` for that user |
+| Next checkout for same user | Saved card shown; pays without re-entering card |
+| Remove saved card in checkout | Row deleted; card not offered on next checkout |
+| Different user | Never sees another user's saved cards |
 
 ## Endpoints
 
@@ -64,5 +79,6 @@ Run `migrations/peach_checkouts.sql` once (or rely on auto-create in `ensurePeac
 | GET | `/mobile/v1/payment/result.php` | Public (WebView result) |
 | POST | `/mobile/v1/payment/peach_webhook.php` | Peach HMAC |
 | GET | `/mobile/v1/payment/status.php?order_id=` | Mobile JWT |
+| POST | `/mobile/v1/payment/remove_card.php` | Open checkout owned by the card's user |
 
 Docs: https://developer.peachpayments.com/docs/checkout-embedded-flutter-tutorial
