@@ -89,10 +89,19 @@ try {
         exit;
     }
 
-    $amount = calculateOrderPayableTotal($pdo, $orderId);
+    $orderTotal = calculateOrderPayableTotal($pdo, $orderId);
+    $paidStmt = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) AS total_paid FROM payments WHERE order_id = ?");
+    $paidStmt->execute([$orderId]);
+    $totalPaid = (float)($paidStmt->fetch(PDO::FETCH_ASSOC)['total_paid'] ?? 0);
+
+    // Charge only the outstanding balance so part-paid orders aren't overcharged.
+    $amount = round($orderTotal - $totalPaid, 2);
     if ($amount <= 0) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Order total must be greater than zero.']);
+        echo json_encode([
+            'success' => false,
+            'message' => $orderTotal > 0 ? 'Order is already paid.' : 'Order total must be greater than zero.',
+        ]);
         exit;
     }
 
@@ -104,41 +113,26 @@ try {
     $notificationUrl = $embedBase . '/mobile/v1/payment/peach_webhook.php';
     $checkoutUrl = $embedBase . '/mobile/v1/payment/embed.php?checkoutId=';
 
-    // Reuse existing open checkout if still pending
-    $existingStmt = $pdo->prepare("
-        SELECT checkout_id, merchant_transaction_id, status
-        FROM peach_checkouts
-        WHERE order_id = ?
-        ORDER BY id DESC
-        LIMIT 1
-    ");
-    $existingStmt->execute([$orderId]);
-    $existing = $existingStmt->fetch(PDO::FETCH_ASSOC);
-
-    if ($existing && !in_array(strtolower((string)$existing['status']), ['successful', 'paid', 'cancelled', 'expired', 'uncertain'], true)) {
-        $checkoutId = $existing['checkout_id'];
-        echo json_encode([
-            'success' => true,
-            'message' => 'Checkout ready',
-            'data' => [
-                'order_id' => $orderId,
-                'order_no' => $order['order_no'],
-                'checkoutId' => $checkoutId,
-                'entityId' => $entityId,
-                'checkoutUrl' => $checkoutUrl . rawurlencode($checkoutId),
-                'amount' => $amount,
-                'currency' => peachCurrency(),
-            ],
-        ]);
-        exit;
-    }
-
-    // Ensure merchant tx unique if a previous row used it (append random digit within 16 chars)
+    // Always start a fresh checkout: Peach can only render a checkout once, so a
+    // previously opened (then closed or cancelled) checkout would cancel immediately.
     $checkTx = $pdo->prepare("SELECT id FROM peach_checkouts WHERE merchant_transaction_id = ?");
     $checkTx->execute([$merchantTxId]);
-    if ($checkTx->fetch()) {
-        $merchantTxId = substr('AP' . $orderId . bin2hex(random_bytes(2)), 0, 16);
+    $attempts = 0;
+    while ($checkTx->fetch()) {
+        if (++$attempts > 5) {
+            throw new RuntimeException('Unable to allocate a unique merchantTransactionId for order ' . $orderId);
+        }
+        // "AP" + base36 order id + 6 hex chars stays within Peach's 8–16 char limit.
+        $merchantTxId = substr('AP' . strtoupper(base_convert((string)$orderId, 10, 36)) . bin2hex(random_bytes(3)), 0, 16);
+        $checkTx->execute([$merchantTxId]);
     }
+
+    // Older open checkouts for this order are abandoned once a new one starts.
+    $pdo->prepare("
+        UPDATE peach_checkouts
+        SET status = 'superseded', updated_at = NOW()
+        WHERE order_id = ? AND status IN ('created', 'pending')
+    ")->execute([$orderId]);
 
     // Only this user's own tokens may ever be offered as saved cards.
     $cardTokens = [];

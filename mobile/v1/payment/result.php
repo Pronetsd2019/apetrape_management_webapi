@@ -7,7 +7,24 @@
 
 $status = isset($_GET['status']) ? preg_replace('/[^a-z_]/', '', strtolower((string)$_GET['status'])) : 'unknown';
 $orderId = isset($_GET['order_id']) ? (int)$_GET['order_id'] : 0;
-$checkoutId = isset($_GET['checkoutId']) ? htmlspecialchars((string)$_GET['checkoutId'], ENT_QUOTES, 'UTF-8') : '';
+$rawCheckoutId = isset($_GET['checkoutId']) ? trim((string)$_GET['checkoutId']) : '';
+$checkoutId = htmlspecialchars($rawCheckoutId, ENT_QUOTES, 'UTF-8');
+
+// A cancelled/expired checkout can't be rendered again, so stop create_checkout reusing it.
+if (in_array($status, ['cancelled', 'expired'], true) && preg_match('/^[a-zA-Z0-9_-]{8,64}$/', $rawCheckoutId)) {
+    try {
+        require_once __DIR__ . '/../../../control/util/connect.php';
+        require_once __DIR__ . '/../../../control/util/peach_checkout.php';
+        ensurePeachCheckoutsTable($pdo);
+        $pdo->prepare("
+            UPDATE peach_checkouts
+            SET status = ?, updated_at = NOW()
+            WHERE checkout_id = ? AND status IN ('created', 'pending')
+        ")->execute([$status, $rawCheckoutId]);
+    } catch (Throwable $e) {
+        error_log('Peach result status update: ' . $e->getMessage());
+    }
+}
 
 $titles = [
     'completed' => 'Payment submitted',

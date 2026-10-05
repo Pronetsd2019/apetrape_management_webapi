@@ -85,10 +85,29 @@ try {
             $code = $peachStatus['result']['code']
                 ?? $peachStatus['result.code']
                 ?? null;
-            if (is_string($code) && preg_match('/^000\.(000|100)/', $code)) {
-                $txId = $peachStatus['id']
-                    ?? $peachStatus['transactionId']
-                    ?? ('peach-status-' . $checkout['checkout_id']);
+            $description = (string)($peachStatus['result']['description']
+                ?? $peachStatus['result.description']
+                ?? '');
+            $peachTxId = $peachStatus['id'] ?? $peachStatus['transactionId'] ?? null;
+            $peachCard = is_array($peachStatus['card'] ?? null) ? $peachStatus['card'] : [];
+            $resolvedStatus = peachStatusFromResult(is_string($code) ? $code : null, $description);
+
+            if (is_string($code) && $code !== '') {
+                updatePeachCheckoutResult(
+                    $pdo,
+                    (string)$checkout['checkout_id'],
+                    $resolvedStatus,
+                    $code,
+                    $description,
+                    $peachTxId !== null ? (string)$peachTxId : null,
+                    isset($peachStatus['paymentBrand']) ? (string)$peachStatus['paymentBrand'] : null,
+                    $peachCard['last4Digits'] ?? ($peachStatus['card.last4Digits'] ?? null)
+                );
+                $checkout['status'] = $resolvedStatus;
+            }
+
+            if ($resolvedStatus === 'successful') {
+                $txId = $peachTxId ?? ('peach-status-' . $checkout['checkout_id']);
                 $amount = isset($peachStatus['amount'])
                     ? (float)$peachStatus['amount']
                     : (float)$checkout['amount'];
@@ -114,9 +133,6 @@ try {
                 }
                 $payStatus = strtolower((string)$recorded['pay_status']);
                 $isPaid = in_array($payStatus, ['paid', 'over paid'], true);
-                $pdo->prepare("UPDATE peach_checkouts SET status = 'successful', updated_at = NOW() WHERE checkout_id = ?")
-                    ->execute([$checkout['checkout_id']]);
-                $checkout['status'] = 'successful';
             }
         } catch (Throwable $e) {
             // Polling must not fail the whole status endpoint

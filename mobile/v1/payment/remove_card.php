@@ -45,7 +45,7 @@ try {
         FROM peach_checkouts pc
         INNER JOIN orders o ON o.id = pc.order_id
         WHERE pc.checkout_id = ?
-          AND pc.status NOT IN ('successful', 'paid', 'cancelled', 'expired')
+          AND pc.status NOT IN ('successful', 'paid', 'cancelled', 'expired', 'failed', 'superseded')
           AND pc.created_at >= (NOW() - INTERVAL 60 MINUTE)
         LIMIT 1
     ");

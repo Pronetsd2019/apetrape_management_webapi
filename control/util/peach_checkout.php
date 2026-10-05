@@ -337,6 +337,11 @@ function ensurePeachCheckoutsTable(PDO $pdo): void
             amount DECIMAL(12,2) NOT NULL,
             currency VARCHAR(3) NOT NULL,
             status VARCHAR(32) NOT NULL DEFAULT 'created',
+            result_code VARCHAR(32) NULL,
+            result_description VARCHAR(255) NULL,
+            transaction_id VARCHAR(64) NULL,
+            payment_brand VARCHAR(32) NULL,
+            card_last4 VARCHAR(4) NULL,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             UNIQUE KEY uk_peach_checkout_id (checkout_id),
@@ -344,6 +349,116 @@ function ensurePeachCheckoutsTable(PDO $pdo): void
             KEY idx_peach_order_id (order_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    ensurePeachCheckoutsResultColumns($pdo);
+}
+
+/**
+ * Add the result columns to peach_checkouts tables created before they existed.
+ */
+function ensurePeachCheckoutsResultColumns(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+
+    $columns = [
+        'result_code' => 'VARCHAR(32) NULL',
+        'result_description' => 'VARCHAR(255) NULL',
+        'transaction_id' => 'VARCHAR(64) NULL',
+        'payment_brand' => 'VARCHAR(32) NULL',
+        'card_last4' => 'VARCHAR(4) NULL',
+    ];
+
+    $stmt = $pdo->prepare("
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'peach_checkouts'
+    ");
+    $stmt->execute();
+    $existing = array_map('strtolower', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+    foreach ($columns as $name => $definition) {
+        if (!in_array($name, $existing, true)) {
+            $pdo->exec("ALTER TABLE peach_checkouts ADD COLUMN {$name} {$definition}");
+        }
+    }
+
+    $checked = true;
+}
+
+/**
+ * Map a Peach result code/description to a peach_checkouts status.
+ */
+function peachStatusFromResult(?string $code, string $description = ''): string
+{
+    $code = $code !== null ? trim($code) : '';
+    if ($code !== '' && preg_match('/^000\.(000|100)/', $code)) {
+        return 'successful';
+    }
+    if ($code !== '' && strpos($code, '000.') === 0) {
+        return 'pending';
+    }
+    if (stripos($description, 'cancel') !== false) {
+        return 'cancelled';
+    }
+    if ($code !== '') {
+        return 'failed';
+    }
+    return 'pending';
+}
+
+/**
+ * Save the latest Peach result against a checkout. Existing values are kept
+ * when the new payload leaves a field empty.
+ */
+function updatePeachCheckoutResult(
+    PDO $pdo,
+    string $checkoutId,
+    string $status,
+    ?string $resultCode,
+    ?string $resultDescription,
+    ?string $transactionId,
+    ?string $paymentBrand,
+    ?string $cardLast4
+): void {
+    $clean = static function (?string $value, int $max): ?string {
+        if ($value === null) {
+            return null;
+        }
+        $value = trim($value);
+        return $value === '' ? null : substr($value, 0, $max);
+    };
+
+    $last4 = $cardLast4 !== null ? substr(preg_replace('/\D/', '', $cardLast4), -4) : null;
+
+    // Webhooks can arrive out of order: never downgrade a finished checkout.
+    $stmt = $pdo->prepare("
+        UPDATE peach_checkouts
+        SET status = CASE
+                WHEN status = 'successful' THEN status
+                WHEN ? = 'pending' AND status IN ('cancelled', 'expired', 'failed', 'superseded') THEN status
+                ELSE ?
+            END,
+            result_code = COALESCE(?, result_code),
+            result_description = COALESCE(?, result_description),
+            transaction_id = COALESCE(?, transaction_id),
+            payment_brand = COALESCE(?, payment_brand),
+            card_last4 = COALESCE(?, card_last4),
+            updated_at = NOW()
+        WHERE checkout_id = ?
+    ");
+    $stmt->execute([
+        $status,
+        $status,
+        $clean($resultCode, 32),
+        $clean($resultDescription, 255),
+        $clean($transactionId, 64),
+        $clean($paymentBrand, 32),
+        $clean($last4, 4),
+        $checkoutId,
+    ]);
 }
 
 /**

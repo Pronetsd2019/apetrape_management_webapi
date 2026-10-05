@@ -107,18 +107,25 @@ try {
         }
     }
 
-    $newStatus = 'pending';
-    if ($isSuccess) {
-        $newStatus = 'successful';
-    } elseif (is_string($resultCode) && (strpos($resultCode, '000.200') === 0)) {
-        $newStatus = 'pending';
-    } elseif (stripos((string)$resultDescription, 'cancel') !== false) {
-        $newStatus = 'cancelled';
-    }
+    $newStatus = peachStatusFromResult(
+        is_string($resultCode) ? $resultCode : null,
+        (string)$resultDescription
+    );
 
     if ($checkoutId) {
-        $upd = $pdo->prepare("UPDATE peach_checkouts SET status = ?, updated_at = NOW() WHERE checkout_id = ?");
-        $upd->execute([$newStatus, $checkoutId]);
+        $card = is_array($payload['card'] ?? null) ? $payload['card'] : [];
+        updatePeachCheckoutResult(
+            $pdo,
+            (string)$checkoutId,
+            $newStatus,
+            is_string($resultCode) ? $resultCode : null,
+            (string)$resultDescription,
+            $transactionId !== null ? (string)$transactionId : null,
+            isset($payload['paymentBrand']) ? (string)$payload['paymentBrand'] : null,
+            isset($payload['card.last4Digits'])
+                ? (string)$payload['card.last4Digits']
+                : (isset($card['last4Digits']) ? (string)$card['last4Digits'] : null)
+        );
     }
 
     if ($isSuccess && $orderId && is_string($registrationId) && $registrationId !== '' && peachTokenisationEnabled()) {
