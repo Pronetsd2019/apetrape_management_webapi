@@ -21,7 +21,7 @@ Offline methods (EFT / MoMo / e-mali / eWallet) remain available as fallbacks.
 4. **Webhooks**: set URL to  
    `https://apetrape.com/webapi/mobile/v1/payment/peach_webhook.php`  
    Enable **webhook signing** and copy the secret.
-5. Paste values into API `.env` (see `.env.peach.example`).
+5. Paste values into API `.env` (see `.env.example`).
 
 ## Required `.env` keys
 
