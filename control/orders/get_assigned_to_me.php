@@ -16,17 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 /**
- * Get Orders Assigned to Me (current driver/admin)
- * GET /orders/get_assigned_to_me.php
- * Query: status (optional) — filter by assignment status (e.g. assigned, in_progress, delivered, cancelled).
- * Returns full order data for orders where assigned_to = current admin (JWT).
- * Same response shape as get_all.php.
+ * Get Orders Assigned to Me (current driver/admin) — server-side pagination
+ * GET /orders/get_assigned_to_me.php?status=assigned&page=1&page_size=10&search=
  */
 
 require_once __DIR__ . '/../util/connect.php';
 require_once __DIR__ . '/../util/error_logger.php';
 require_once __DIR__ . '/../middleware/auth_middleware.php';
 require_once __DIR__ . '/../util/check_permission.php';
+require_once __DIR__ . '/../util/order_list_helpers.php';
 
 requireJwtAuth();
 
@@ -54,47 +52,64 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 try {
-    $statusFilter = isset($_GET['status']) ? trim((string) $_GET['status']) : null;
+    $pagination = parseAdminListPagination(25, 100);
+    $sortInfo = parseOrderListSort();
+    $statusFilter = isset($_GET['status']) ? trim((string)$_GET['status']) : null;
 
-    // Orders assigned to current admin; optional filter by assignment status
-    if ($statusFilter !== null && $statusFilter !== '') {
-        $stmtAssigned = $pdo->prepare("
-            SELECT DISTINCT order_id
-            FROM order_assignments
-            WHERE assigned_to = ? AND status = ?
-            ORDER BY order_id DESC
-        ");
-        $stmtAssigned->execute([$userId, $statusFilter]);
-    } else {
-        $stmtAssigned = $pdo->prepare("
-            SELECT DISTINCT order_id
+    $fromSql = "
+        FROM orders o
+        INNER JOIN users u ON o.user_id = u.id
+        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
+        INNER JOIN (
+            SELECT order_id, MAX(id) AS assignment_id
             FROM order_assignments
             WHERE assigned_to = ?
-            ORDER BY order_id DESC
-        ");
-        $stmtAssigned->execute([$userId]);
+    ";
+    $baseParams = [$userId];
+    if ($statusFilter !== null && $statusFilter !== '') {
+        $fromSql .= ' AND status = ?';
+        $baseParams[] = $statusFilter;
     }
-    $assignedOrderIds = array_column($stmtAssigned->fetchAll(PDO::FETCH_ASSOC), 'order_id');
+    $fromSql .= '
+            GROUP BY order_id
+        ) latest_oa ON latest_oa.order_id = o.id
+        INNER JOIN order_assignments oa ON oa.id = latest_oa.assignment_id
+    ';
 
-    if (empty($assignedOrderIds)) {
-        http_response_code(200);
-        $emptyPayload = [
-            'success' => true,
-            'message' => 'Orders retrieved successfully.',
-            'current_user_id' => (int) $userId,
-            'data' => [],
-            'count' => 0
-        ];
+    $baseConditions = ["o.status != 'draft'"];
+    $whereSql = ' WHERE ' . implode(' AND ', $baseConditions);
+
+    $totalStmt = $pdo->prepare('SELECT COUNT(*) ' . $fromSql . $whereSql);
+    $totalStmt->execute($baseParams);
+    $total = (int)$totalStmt->fetchColumn();
+
+    $filterConditions = $baseConditions;
+    $filterParams = $baseParams;
+    appendOrderSearchFilter($pagination['search'], $filterConditions, $filterParams);
+    $filterWhereSql = ' WHERE ' . implode(' AND ', $filterConditions);
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) ' . $fromSql . $filterWhereSql);
+    $countStmt->execute($filterParams);
+    $filtered = (int)$countStmt->fetchColumn();
+
+    if ($filtered === 0) {
+        $extra = ['current_user_id' => (int)$userId];
         if ($statusFilter !== null && $statusFilter !== '') {
-            $emptyPayload['status_filter_applied'] = $statusFilter;
-            $emptyPayload['message'] = 'No orders match. Try without ?status= or use ?status=assigned (assignment status in DB may differ).';
+            $extra['status_filter_applied'] = $statusFilter;
         }
-        echo json_encode($emptyPayload);
+        http_response_code(200);
+        echo json_encode(orderListResponse(
+            [],
+            $total,
+            0,
+            $pagination,
+            ($statusFilter ? 'No orders match. Try without ?status= or use ?status=assigned.' : 'Orders retrieved successfully.'),
+            $extra
+        ));
         exit;
     }
 
-    $placeholders = implode(',', array_fill(0, count($assignedOrderIds), '?'));
-    $sql = "
+    $listSql = "
         SELECT
             o.id,
             o.user_id,
@@ -113,216 +128,43 @@ try {
             u.email,
             u.cell,
             pp.name AS pickup_point_name,
-            pp.address AS pickup_point_address
-        FROM orders o
-        INNER JOIN users u ON o.user_id = u.id
-        LEFT JOIN pickup_points pp ON o.pickup_point = pp.id
-        WHERE o.status != 'draft' AND o.id IN ($placeholders)
-        ORDER BY o.confirm_date DESC
+            pp.address AS pickup_point_address,
+            oa.id AS assignment_id,
+            oa.status AS assignment_status,
+            oa.updated_at AS assignment_updated_at
+        {$fromSql}
+        {$filterWhereSql}
+        ORDER BY {$sortInfo['sql']}
+        LIMIT ? OFFSET ?
     ";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($assignedOrderIds);
-    $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $orderIds = array_column($orders, 'id');
-    $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
-
-    // Latest assignment (id, status) per order for current driver
-    $stmtAssign = $pdo->prepare("
-        SELECT id, order_id, status, updated_at
-        FROM order_assignments
-        WHERE order_id IN ($placeholders) AND assigned_to = ?
-        ORDER BY order_id, id DESC
-    ");
-    $stmtAssign->execute(array_merge($orderIds, [$userId]));
-    $assignRows = $stmtAssign->fetchAll(PDO::FETCH_ASSOC);
-    $assignmentByOrder = [];
-    foreach ($assignRows as $ar) {
-        $oid = (int) $ar['order_id'];
-        if (!isset($assignmentByOrder[$oid])) {
-            $assignmentByOrder[$oid] = [
-                'assignment_id' => (int) $ar['id'],
-                'assignment_status' => $ar['status'],
-                'assignment_updated_at' => $ar['updated_at']
-            ];
-        }
+    $listStmt = $pdo->prepare($listSql);
+    $listParams = array_merge($filterParams, [$pagination['page_size'], $pagination['offset']]);
+    foreach ($listParams as $idx => $value) {
+        $listStmt->bindValue($idx + 1, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
     }
+    $listStmt->execute();
+    $orders = $listStmt->fetchAll(PDO::FETCH_ASSOC);
+    $orders = enrichOrdersWithAggregations($pdo, $orders);
 
-    $stmtItems = $pdo->prepare("
-        SELECT id, sku, name, quantity, price, total, created_at, updated_at, order_id
-        FROM order_items
-        WHERE order_id IN ($placeholders)
-        ORDER BY order_id ASC, id ASC
-    ");
-    $stmtItems->execute($orderIds);
-    $allItems = $stmtItems->fetchAll(PDO::FETCH_ASSOC);
-
-    $itemsByOrder = [];
-    foreach ($allItems as $item) {
-        $orderId = $item['order_id'];
-        if (!isset($itemsByOrder[$orderId])) {
-            $itemsByOrder[$orderId] = [
-                'items' => [],
-                'unique_items_count' => 0,
-                'total_quantity' => 0,
-                'total_price' => 0.0,
-                'unique_skus' => []
-            ];
-        }
-        $itemsByOrder[$orderId]['items'][] = $item;
-        $itemsByOrder[$orderId]['total_quantity'] += (int)$item['quantity'];
-        $itemsByOrder[$orderId]['total_price'] += (float)$item['total'];
-        if (!in_array($item['sku'], $itemsByOrder[$orderId]['unique_skus'])) {
-            $itemsByOrder[$orderId]['unique_skus'][] = $item['sku'];
-            $itemsByOrder[$orderId]['unique_items_count']++;
-        }
-    }
-
-    $stmtPayments = $pdo->prepare("
-        SELECT order_id, SUM(amount) as total_paid
-        FROM payments
-        WHERE order_id IN ($placeholders)
-        GROUP BY order_id
-    ");
-    $stmtPayments->execute($orderIds);
-    $paymentsByOrder = $stmtPayments->fetchAll(PDO::FETCH_ASSOC);
-    $paymentsMap = [];
-    foreach ($paymentsByOrder as $p) {
-        $paymentsMap[$p['order_id']] = (float)$p['total_paid'];
-    }
-
-    $stmtDeliveryFee = $pdo->prepare("
-        SELECT order_id, id, cost_map_id, fee, created_at, updated_at
-        FROM delivery_fee
-        WHERE order_id IN ($placeholders)
-    ");
-    $stmtDeliveryFee->execute($orderIds);
-    $deliveryFeesByOrder = $stmtDeliveryFee->fetchAll(PDO::FETCH_ASSOC);
-    $deliveryFeeMap = [];
-    $deliveryFeeRowByOrder = [];
-    foreach ($deliveryFeesByOrder as $row) {
-        $deliveryFeeMap[$row['order_id']] = (float)$row['fee'];
-        $deliveryFeeRowByOrder[$row['order_id']] = $row;
-    }
-
-    $stmtPickupFee = $pdo->prepare("
-        SELECT order_id, id, pickup_id, fee, create_At
-        FROM pickup_order_fees
-        WHERE order_id IN ($placeholders)
-    ");
-    $stmtPickupFee->execute($orderIds);
-    $pickupFeesByOrder = $stmtPickupFee->fetchAll(PDO::FETCH_ASSOC);
-    $pickupFeeMap = [];
-    $pickupFeeRowByOrder = [];
-    foreach ($pickupFeesByOrder as $row) {
-        $pickupFeeMap[$row['order_id']] = (float)$row['fee'];
-        $pickupFeeRowByOrder[$row['order_id']] = $row;
-    }
-
-    foreach ($orders as &$order) {
-        $orderId = $order['id'];
-        $totalPrice = 0.0;
-        $paidAmount = $paymentsMap[$orderId] ?? 0.0;
-        $deliveryFeeAmount = $deliveryFeeMap[$orderId] ?? 0.0;
-        $pickupFeeAmount = $pickupFeeMap[$orderId] ?? 0.0;
-
-        $dbDeliveryMethod = $order['delivery_method'] ?? null;
-        $order['address'] = ($dbDeliveryMethod === 'delivery')
-            ? ($order['delivery_address'] ?? '')
-            : trim(($order['pickup_point_name'] ?? '') . ($order['pickup_point_address'] ? ' - ' . $order['pickup_point_address'] : ''));
-        $order['delivery_method'] = ($dbDeliveryMethod === 'pickup') ? 'collection' : ($dbDeliveryMethod ?: 'delivery');
-
-        $order['assignment_id'] = $assignmentByOrder[$orderId]['assignment_id'] ?? null;
-        $order['assignment_status'] = $assignmentByOrder[$orderId]['assignment_status'] ?? null;
-        $order['assignment_updated_at'] = $assignmentByOrder[$orderId]['assignment_updated_at'] ?? null;
-
-        if (isset($itemsByOrder[$orderId])) {
-            $order['order_items'] = $itemsByOrder[$orderId]['items'];
-            $totalPrice = $itemsByOrder[$orderId]['total_price'];
-            $totalAmount = $totalPrice + $deliveryFeeAmount + $pickupFeeAmount;
-            $order['delivery_fee'] = isset($deliveryFeeRowByOrder[$orderId])
-                ? [
-                    'id' => (int)$deliveryFeeRowByOrder[$orderId]['id'],
-                    'cost_map_id' => (int)$deliveryFeeRowByOrder[$orderId]['cost_map_id'],
-                    'fee' => (float)$deliveryFeeRowByOrder[$orderId]['fee'],
-                    'order_id' => (int)$deliveryFeeRowByOrder[$orderId]['order_id'],
-                    'created_at' => $deliveryFeeRowByOrder[$orderId]['created_at'],
-                    'updated_at' => $deliveryFeeRowByOrder[$orderId]['updated_at']
-                ]
-                : null;
-            $order['pickup_fee'] = isset($pickupFeeRowByOrder[$orderId])
-                ? [
-                    'id' => (int)$pickupFeeRowByOrder[$orderId]['id'],
-                    'pickup_id' => (int)$pickupFeeRowByOrder[$orderId]['pickup_id'],
-                    'order_id' => (int)$pickupFeeRowByOrder[$orderId]['order_id'],
-                    'fee' => (float)$pickupFeeRowByOrder[$orderId]['fee'],
-                    'create_At' => $pickupFeeRowByOrder[$orderId]['create_At']
-                ]
-                : null;
-            $order['aggregations'] = [
-                'unique_items_count' => $itemsByOrder[$orderId]['unique_items_count'],
-                'total_quantity' => $itemsByOrder[$orderId]['total_quantity'],
-                'total_price' => round($totalPrice, 2),
-                'delivery_fee' => round($deliveryFeeAmount, 2),
-                'pickup_fee' => round($pickupFeeAmount, 2),
-                'total_amount' => round($totalAmount, 2),
-                'paid_amount' => $paidAmount,
-                'due_amount' => round($totalAmount - $paidAmount, 2)
-            ];
-        } else {
-            $order['order_items'] = [];
-            $order['delivery_fee'] = isset($deliveryFeeRowByOrder[$orderId])
-                ? [
-                    'id' => (int)$deliveryFeeRowByOrder[$orderId]['id'],
-                    'cost_map_id' => (int)$deliveryFeeRowByOrder[$orderId]['cost_map_id'],
-                    'fee' => (float)$deliveryFeeRowByOrder[$orderId]['fee'],
-                    'order_id' => (int)$deliveryFeeRowByOrder[$orderId]['order_id'],
-                    'created_at' => $deliveryFeeRowByOrder[$orderId]['created_at'],
-                    'updated_at' => $deliveryFeeRowByOrder[$orderId]['updated_at']
-                ]
-                : null;
-            $order['pickup_fee'] = isset($pickupFeeRowByOrder[$orderId])
-                ? [
-                    'id' => (int)$pickupFeeRowByOrder[$orderId]['id'],
-                    'pickup_id' => (int)$pickupFeeRowByOrder[$orderId]['pickup_id'],
-                    'order_id' => (int)$pickupFeeRowByOrder[$orderId]['order_id'],
-                    'fee' => (float)$pickupFeeRowByOrder[$orderId]['fee'],
-                    'create_At' => $pickupFeeRowByOrder[$orderId]['create_At']
-                ]
-                : null;
-            $totalAmount = $deliveryFeeAmount + $pickupFeeAmount;
-            $order['aggregations'] = [
-                'unique_items_count' => 0,
-                'total_quantity' => 0,
-                'total_price' => 0.0,
-                'delivery_fee' => round($deliveryFeeAmount, 2),
-                'pickup_fee' => round($pickupFeeAmount, 2),
-                'total_amount' => round($totalAmount, 2),
-                'paid_amount' => $paidAmount,
-                'due_amount' => round($totalAmount - $paidAmount, 2)
-            ];
-        }
-    }
-    unset($order);
-
-    $payload = [
-        'success' => true,
-        'message' => 'Orders retrieved successfully.',
-        'current_user_id' => (int) $userId,
-        'data' => $orders,
-        'count' => count($orders)
-    ];
+    $extra = ['current_user_id' => (int)$userId];
     if ($statusFilter !== null && $statusFilter !== '') {
-        $payload['status_filter_applied'] = $statusFilter;
+        $extra['status_filter_applied'] = $statusFilter;
     }
-    http_response_code(200);
-    echo json_encode($payload);
 
+    http_response_code(200);
+    echo json_encode(orderListResponse(
+        $orders,
+        $total,
+        $filtered,
+        $pagination,
+        'Orders retrieved successfully.',
+        $extra
+    ));
 } catch (PDOException $e) {
     logException('orders_get_assigned_to_me', $e);
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Error retrieving assigned orders: ' . $e->getMessage()
+        'message' => 'Error retrieving assigned orders: ' . $e->getMessage(),
     ]);
 }

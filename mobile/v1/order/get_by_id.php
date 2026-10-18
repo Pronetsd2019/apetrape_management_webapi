@@ -211,9 +211,20 @@ try {
     $deliveryFeeStmt->execute([$order_id]);
     $deliveryFee = $deliveryFeeStmt->fetch(PDO::FETCH_ASSOC);
 
-    // Calculate totals including delivery fee
+    // Pickup collection fee (stored separately from home-delivery fees)
+    $pickupFeeStmt = $pdo->prepare("
+        SELECT id, pickup_id, order_id, fee, create_At
+        FROM pickup_order_fees
+        WHERE order_id = ?
+        LIMIT 1
+    ");
+    $pickupFeeStmt->execute([$order_id]);
+    $pickupFeeRow = $pickupFeeStmt->fetch(PDO::FETCH_ASSOC);
+
+    // Calculate totals including delivery fee + pickup/collection fee
     $delivery_fee_amount = $deliveryFee ? (float)$deliveryFee['fee'] : 0;
-    $total_amount = round($items_total + $delivery_fee_amount, 2);
+    $pickup_fee_amount = $pickupFeeRow ? (float)$pickupFeeRow['fee'] : 0;
+    $total_amount = round($items_total + $delivery_fee_amount + $pickup_fee_amount, 2);
     $total_paid = array_sum(array_column($payments, 'amount'));
     $due_amount = max(0, round($total_amount, 2) - round($total_paid, 2));
 
@@ -271,7 +282,14 @@ try {
             'order_id' => (int)$deliveryFee['order_id'],
             'created_at' => $deliveryFee['created_at'],
             'updated_at' => $deliveryFee['updated_at']
-        ] : null
+        ] : null,
+        'pickup_fee' => $pickupFeeRow ? [
+            'id' => (int)$pickupFeeRow['id'],
+            'pickup_id' => (int)$pickupFeeRow['pickup_id'],
+            'order_id' => (int)$pickupFeeRow['order_id'],
+            'fee' => round((float)$pickupFeeRow['fee'], 2),
+            'create_At' => $pickupFeeRow['create_At'],
+        ] : null,
     ];
 
     http_response_code(200);

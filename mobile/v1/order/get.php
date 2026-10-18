@@ -221,6 +221,24 @@ try {
         }
     }
 
+    // Get pickup/collection fees for all orders
+    $pickupFeeByOrder = [];
+    if (!empty($orderIds)) {
+        $orderPlaceholders = implode(',', array_fill(0, count($orderIds), '?'));
+        $pickupFeeStmt = $pdo->prepare("
+            SELECT id, pickup_id, order_id, fee, create_At
+            FROM pickup_order_fees
+            WHERE order_id IN ({$orderPlaceholders})
+            ORDER BY order_id ASC, id ASC
+        ");
+        $pickupFeeStmt->execute($orderIds);
+        foreach ($pickupFeeStmt->fetchAll(PDO::FETCH_ASSOC) as $fee) {
+            if (!isset($pickupFeeByOrder[$fee['order_id']])) {
+                $pickupFeeByOrder[$fee['order_id']] = $fee;
+            }
+        }
+    }
+
     // Group order items by order_id and add images
     $itemsByOrder = [];
     foreach ($orderItems as $item) {
@@ -245,12 +263,14 @@ try {
         $total_quantity = array_sum(array_column($orderItems, 'quantity'));
         $items_total = array_sum(array_column($orderItems, 'total'));
 
-        // Get delivery fee for this order
+        // Get delivery / pickup fees for this order
         $deliveryFee = $deliveryFeeByOrder[$orderId] ?? null;
-        
-        // Calculate totals including delivery fee
+        $pickupFee = $pickupFeeByOrder[$orderId] ?? null;
+
+        // Calculate totals including delivery fee + pickup/collection fee
         $delivery_fee_amount = $deliveryFee ? (float)$deliveryFee['fee'] : 0;
-        $total_amount = round($items_total + $delivery_fee_amount, 2);
+        $pickup_fee_amount = $pickupFee ? (float)$pickupFee['fee'] : 0;
+        $total_amount = round($items_total + $delivery_fee_amount + $pickup_fee_amount, 2);
 
         // Get payments for this order and calculate totals
         $payments = $paymentsByOrder[$orderId] ?? [];
@@ -311,7 +331,14 @@ try {
                 'order_id' => (int)$deliveryFee['order_id'],
                 'created_at' => $deliveryFee['created_at'],
                 'updated_at' => $deliveryFee['updated_at']
-            ] : null
+            ] : null,
+            'pickup_fee' => $pickupFee ? [
+                'id' => (int)$pickupFee['id'],
+                'pickup_id' => (int)$pickupFee['pickup_id'],
+                'order_id' => (int)$pickupFee['order_id'],
+                'fee' => round((float)$pickupFee['fee'], 2),
+                'create_At' => $pickupFee['create_At'],
+            ] : null,
         ];
     }
 

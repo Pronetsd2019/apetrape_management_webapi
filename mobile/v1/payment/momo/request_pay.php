@@ -206,9 +206,29 @@ try {
     ]);
 } catch (Throwable $e) {
     logException('momo_request_pay', $e);
-    http_response_code(500);
+
+    $detail = $e->getMessage();
+    $userMessage = 'Unable to start MoMo payment. Please try again later.';
+    $status = 500;
+
+    // Map known MTN/auth failures to actionable (non-secret) messages.
+    if (stripos($detail, 'subscription key') !== false
+        || (stripos($detail, 'MoMo token failed') !== false && stripos($detail, '401') !== false)
+    ) {
+        $userMessage = 'Mobile money credentials were rejected by MTN. Please check MOMO_SUBSCRIPTION_KEY and API user/key in server .env.';
+        $status = 502;
+    } elseif (stripos($detail, 'MoMo token') !== false) {
+        $userMessage = 'Unable to authenticate with MTN MoMo. Please verify MoMo API credentials and try again.';
+        $status = 502;
+    } elseif (stripos($detail, 'not configured') !== false) {
+        $userMessage = 'Mobile money is not configured yet. Please use another payment method or try again later.';
+        $status = 503;
+    }
+
+    http_response_code($status);
     echo json_encode([
         'success' => false,
-        'message' => 'Unable to start MoMo payment. Please try again later.',
+        'message' => $userMessage,
+        'error_details' => substr($detail, 0, 300),
     ]);
 }
